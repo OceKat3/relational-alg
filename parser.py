@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -6,8 +7,6 @@ type grammartype = dict[str, list[list[str | Terminal]]]
 
 
 START_SYMBOL = "^"
-
-# [*literal_terminals("if"), "expr", *literal_terminals("then")]
 
 from functools import wraps
 
@@ -20,7 +19,7 @@ def literal(s):
     func = lambda x : x == s
     return hook_str_of_function(func, s)
 
-def literal_terminals(s:str):
+def literal_string(s:str):
     return [hook_str_of_function(literal(character), character) for character in s]
 
 def any_terminal_in(s:str):
@@ -29,8 +28,8 @@ def any_terminal_in(s:str):
 
 arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["product"], ["product", literal("+"), "sum"]],
-    "product": [["factor"], ["factor", literal("*"), "product"]],
+    "sum": [["product"], ["sum", literal("+"), "product"]],
+    "product": [["factor"], ["product", literal("*"), "factor"]],
     "factor": [["number"], [literal("("), "sum", literal(")")]],
     "number": [["digit"], ["number", "digit"]],
     "digit": [[any_terminal_in("0123456789")]]
@@ -60,7 +59,6 @@ class ParsingItem:
     @property
     def is_completed(self) -> bool:
         return self.progress == len(self.rule)
-    
 
     @property
     def action_needed(self):
@@ -81,7 +79,7 @@ class ParsingItem:
 class Recognizer:
 
     document: str
-    grammar: grammartype = field(default_factory=lambda : simple_arithmetic_grammar)
+    grammar: grammartype = field(default_factory=lambda : arithmetic_grammar)
     state_sets: list[list[ParsingItem]] = field(default_factory=lambda : [])
 
     def item_already_exists(self, i, new_item:ParsingItem):
@@ -90,10 +88,11 @@ class Recognizer:
             for other in self.state_sets[i]
         )
 
-    def repr_state_sets(self) -> str :
+    @staticmethod
+    def repr_state_sets(state_sets) -> str :
         return "\n".join(
             f"=== {i} ===\n{'\n'.join(map(str, state_set))}"
-            for i, state_set in enumerate(self.state_sets)
+            for i, state_set in enumerate(state_sets)
         )
 
     def complete(self, i, j):
@@ -162,14 +161,9 @@ class Recognizer:
             for x in self.grammar[START_SYMBOL]
         ]
 
-        # print(
-        #     self.repr_state_sets()
-        # )
-
         for i in range(len(self.document) + 1) :
             j = 0
             while j < len(self.state_sets[i]):
-                print(self.state_sets[i][j].action_needed)
                 match self.state_sets[i][j].action_needed:
                     case 'predict' :
                         self.predict(i, j)
@@ -193,10 +187,6 @@ class Recognizer:
                 ]
 
         remove_all_incomplete_items()
-        self.state_sets = Parser.invert_items(self.state_sets)
-        print(
-            self.repr_state_sets()
-        )
 
         return was_parse_successful
 
@@ -215,8 +205,33 @@ class InvertedItem(ParsingItem):
             progress=len(item.rule)
         )
 
-@dataclass
 class Parser:
+
+    inverted_items: list[list[InvertedItem]]
+    document: str
+    seen_set:list[InvertedItem] = list()
+
+    def __init__(self, items: list[list[ParsingItem]], document: str):
+        self.inverted_items = Parser.invert_items(items)
+        self.document = document
+
+        print(Recognizer.repr_state_sets(self.inverted_items))
+
+    @dataclass
+    class Node:
+        children: list[Parser.Node | str]
+        item:InvertedItem
+
+        @property
+        def symbol(self) -> str:
+            return self.item.goal
+
+        def to_printable_graph(self):
+            return (self.symbol, [
+                child if isinstance(child, str) else child.to_printable_graph() for child in self.children
+            ])
+
+        
 
     @staticmethod
     def invert_items(items: list[list[ParsingItem]]) -> list[list[InvertedItem]]:
@@ -228,6 +243,51 @@ class Parser:
 
         return out
 
-r = Recognizer(document="1+2+3+4")
+    def get_max_length_item(self, i=0, symbol=START_SYMBOL) -> InvertedItem:
+
+        state_set = self.inverted_items[i]
+        
+        return max(
+            [item for item in state_set if item.goal == symbol and item not in self.seen_set],
+            key = lambda item : item.end,
+        )
+
+    def create_tree(self, i=0, symbol=START_SYMBOL) -> Node :
+        print(i, symbol)
+        item = self.get_max_length_item(i, symbol)
+        self.seen_set.append(item)
+
+        children:list[Parser.Node | str] = []
+
+        document_position = i
+
+        for child_symbol in item.rule :
+
+            if is_token_terminal(child_symbol) :
+                children.append(self.document[document_position])
+                document_position += 1
+            else:
+                assert isinstance(child_symbol, str)
+
+                child_node = self.create_tree(document_position, child_symbol)
+                children.append(child_node)
+                document_position = child_node.item.end
+
+        return Parser.Node(
+            item=item,
+            children=children
+        )
+        
+
+
+r = Recognizer(document="(1+2)+((((((((((((((((((((((((((((((3))))))))))))))))))))))))))))))))))))))))))))))))))))+4)")
 
 r.earley_recognize()
+
+root = Parser(document=r.document, items=r.state_sets).create_tree()
+
+from pprint import pprint
+
+pprint(
+    root.to_printable_graph()
+)
