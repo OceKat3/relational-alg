@@ -34,8 +34,8 @@ def any_special_char_in(s:str):
 
 arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["product"], ["sum", any_special_char_in("+"), "product"]],
-    "product": [["factor"], ["product", any_special_char_in("*"), "factor"]],
+    "sum": [["product"], ["product", any_special_char_in("+"), "sum"]],
+    "product": [["factor"], ["factor", any_special_char_in("*"), "product"]],
     "factor": [["number"], [any_special_char_in("("), "sum", any_special_char_in(")")]],
     "number": [[number]]
 }
@@ -297,6 +297,8 @@ class Recognizer:
                     if item.is_completed
                 ]
 
+        print([len(x) for x in self.state_sets])
+
         remove_all_incomplete_items()
 
         return was_parse_successful
@@ -354,18 +356,21 @@ class Parser:
 
         return out
 
-    def get_max_length_item(self, i=0, symbol=START_SYMBOL) -> InvertedItem:
-
+    def get_max_length_item(self, i:int, symbol:str, end:int) -> InvertedItem:
+        
         state_set = self.inverted_items[i]
         
         return max(
-            [item for item in state_set if item.goal == symbol and item not in self.seen_set],
+            [item for item in state_set if item.goal == symbol and item not in self.seen_set and item.end <= end],
             key = lambda item : item.end,
         )
 
-    def create_tree(self, i=0, symbol=START_SYMBOL, recursive_depth:int = 0) -> Node :
-        print('    ' * recursive_depth, i, symbol)
-        item = self.get_max_length_item(i, symbol)
+    def create_tree(self, i=0, symbol=START_SYMBOL, end=-1, recursive_depth:int = 0) -> Node :
+        if end == -1 : end = len(self.document)
+
+        print('    ' * recursive_depth, i, end=" ")
+        item = self.get_max_length_item(i, symbol, end)
+        print(str(item))
         self.seen_set.append(item)
 
         if symbol == START_SYMBOL and item.end != len(self.document) :
@@ -374,7 +379,7 @@ class Parser:
         children:list[Parser.Node | Token] = []
 
         document_position = i
-
+        
         for child_symbol in item.rule :
 
             if is_token_terminal(child_symbol) :
@@ -383,7 +388,7 @@ class Parser:
             else:
                 assert isinstance(child_symbol, str)
 
-                child_node = self.create_tree(document_position, child_symbol, recursive_depth+1)
+                child_node = self.create_tree(document_position, child_symbol, end=item.end, recursive_depth=recursive_depth+1)
                 children.append(child_node)
                 document_position = child_node.item.end
 
@@ -405,19 +410,19 @@ def document_to_parse_tree(document:str) -> Parser.Node:
     recognizer = Recognizer(document=tokens)
     recognizer.earley_recognize()
 
-    print(
-        recognizer.repr_state_sets(
-            # Parser.invert_items(
-                recognizer.state_sets
-            # )
-        )
-    )
+    # print(
+    #     recognizer.repr_state_sets(
+    #         # Parser.invert_items(
+    #             recognizer.state_sets
+    #         # )
+    #     )
+    # )
 
     root = Parser(document=recognizer.document, items=recognizer.state_sets).create_tree()
     return root
 
 
-root = document_to_parse_tree("3+4*5")
+root = document_to_parse_tree("3*4+5+6")
 
 pprint(
     root.to_printable_graph()
