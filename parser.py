@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-type Terminal = Callable[[str], bool]
+type Terminal = Callable[[Token], bool]
 type grammartype = dict[str, list[list[str | Terminal]]]
 
 
@@ -14,32 +14,47 @@ def hook_str_of_function(func:Terminal, display_text:str):
     setattr(func, "__str__", lambda : display_text)
     return func
 
-def literal(s):
-    assert len(s) == 1
-    func = lambda x : x == s
-    return hook_str_of_function(func, s)
+def string_literal(token:Token) -> bool:
+    return token[0] == 'string literal'
+hook_str_of_function(string_literal, 'string_literal')
 
-def literal_string(s:str):
-    return [hook_str_of_function(literal(character), character) for character in s]
+def number(token:Token) -> bool:
+    return token[0] == 'number'
+hook_str_of_function(number, 'number')
 
-def any_terminal_in(s:str):
-    func =  lambda x : x in s
-    return hook_str_of_function(func, s)
+def literal_identifier(s:str):
+    def predicate(token:Token) -> bool:
+        return token[0] == 'identifier' and token[1] == s
+    return hook_str_of_function(predicate, s)
+
+def any_special_char_in(s:str):
+    def predicate(token:Token) -> bool:
+        return token[0] == 'char' and token[1] == s
+    return hook_str_of_function(predicate, s)
 
 arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["product"], ["sum", literal("+"), "product"]],
-    "product": [["factor"], ["product", literal("*"), "factor"]],
-    "factor": [["number"], [literal("("), "sum", literal(")")]],
-    "number": [["digit"], ["number", "digit"]],
-    "digit": [[any_terminal_in("0123456789")]]
+    "sum": [["product"], ["sum", any_special_char_in("+"), "product"]],
+    "product": [["factor"], ["product", any_special_char_in("*"), "factor"]],
+    "factor": [["number"], [any_special_char_in("("), "sum", any_special_char_in(")")]],
+    "number": [[number]]
 }
+
+"""
+[('number', 3), ('char', '+'), ('number', 4), ('char', '*'), ('number', 5)]
+
+sum
+sum + product
+number + product
+number + product * factor
+number + number * number
+
+"""
 
 simple_arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["number"], [literal("("), "sum", literal(")")], ["sum", literal("+"), "sum"]],
-    "number": [["digit"], ["number", "digit"]],
-    "digit": [[any_terminal_in("0123456789")]]
+    "sum": [["number"], [any_special_char_in("("), "sum", any_special_char_in(")")], ["sum", any_special_char_in("+"), "sum"]],
+    "number": [[number]]
 }
 
 from typing import Literal, Generator
@@ -63,8 +78,6 @@ def tokenizer(document: str) -> Generator[Token]:
     STRING_BEGIN = lambda c : c == "\""
     STRING_END = lambda c : c == "\""
     STRING_ESCAPE = lambda c : c == "\\"
-
-
 
     def escaped_string(next_char) -> Generator[Token]:
         nonlocal current_state, current_token
@@ -128,10 +141,16 @@ def tokenizer(document: str) -> Generator[Token]:
         for character in document :
             yield from current_state(character)
 
+        if len(current_token) > 0 :
+            if current_state in [identifier, number] :
+                yield from current_state(' ')
+            elif current_state in [string, escaped_string] :
+                raise SyntaxError('expected string to terminate at end of input')
+            
+
     for token in document_loop():
         yield token
         current_token = ""
-
 
 
 def is_token_terminal(token: str | Terminal | None):
@@ -170,7 +189,7 @@ class ParsingItem:
 @dataclass
 class Recognizer:
 
-    document: str
+    document: list[Token]
     grammar: grammartype = field(default_factory=lambda : arithmetic_grammar)
     state_sets: list[list[ParsingItem]] = field(default_factory=lambda : [])
 
@@ -300,10 +319,10 @@ class InvertedItem(ParsingItem):
 class Parser:
 
     inverted_items: list[list[InvertedItem]]
-    document: str
+    document: list[Token]
     seen_set:list[InvertedItem] = list()
 
-    def __init__(self, items: list[list[ParsingItem]], document: str):
+    def __init__(self, items: list[list[ParsingItem]], document: list[Token]):
         self.inverted_items = Parser.invert_items(items)
         self.document = document
 
@@ -311,7 +330,7 @@ class Parser:
 
     @dataclass
     class Node:
-        children: list[Parser.Node | str]
+        children: list[Parser.Node | Token]
         item:InvertedItem
 
         @property
@@ -320,7 +339,7 @@ class Parser:
 
         def to_printable_graph(self):
             return (self.symbol, [
-                child if isinstance(child, str) else child.to_printable_graph() for child in self.children
+                child if isinstance(child, tuple) else child.to_printable_graph() for child in self.children
             ])
 
         
@@ -344,12 +363,15 @@ class Parser:
             key = lambda item : item.end,
         )
 
-    def create_tree(self, i=0, symbol=START_SYMBOL) -> Node :
-        print(i, symbol)
+    def create_tree(self, i=0, symbol=START_SYMBOL, recursive_depth:int = 0) -> Node :
+        print('    ' * recursive_depth, i, symbol)
         item = self.get_max_length_item(i, symbol)
         self.seen_set.append(item)
 
-        children:list[Parser.Node | str] = []
+        if symbol == START_SYMBOL and item.end != len(self.document) :
+            raise SyntaxError(f'Failed to fully parse input')
+
+        children:list[Parser.Node | Token] = []
 
         document_position = i
 
@@ -361,7 +383,7 @@ class Parser:
             else:
                 assert isinstance(child_symbol, str)
 
-                child_node = self.create_tree(document_position, child_symbol)
+                child_node = self.create_tree(document_position, child_symbol, recursive_depth+1)
                 children.append(child_node)
                 document_position = child_node.item.end
 
@@ -373,20 +395,47 @@ class Parser:
 
 
 from pprint import pprint
-# r = Recognizer(document="(1+2)+(3)+4)")
 
-# r.earley_recognize()
+def document_to_parse_tree(document:str) -> Parser.Node:
 
-# root = Parser(document=r.document, items=r.state_sets).create_tree()
+    tokens = list(tokenizer(document))
+
+    pprint(tokens)
+
+    recognizer = Recognizer(document=tokens)
+    recognizer.earley_recognize()
+
+    print(
+        recognizer.repr_state_sets(
+            # Parser.invert_items(
+                recognizer.state_sets
+            # )
+        )
+    )
+
+    root = Parser(document=recognizer.document, items=recognizer.state_sets).create_tree()
+    return root
 
 
+root = document_to_parse_tree("3+4*5")
+
+pprint(
+    root.to_printable_graph()
+)
+
+
+
+# assert list(tokenizer(""" 
 # pprint(
 #     root.to_printable_graph()
 # )
-
-
-pprint(
-    list(tokenizer(""" pprint(
-     root.to_printable_graph()
- )"""))
-)
+# """)) == [
+#     ('identifier', 'pprint'),
+#     ('char', '('),
+#     ('identifier', 'root'),
+#     ('char', '.'),
+#     ('identifier', 'to_printable_graph'),
+#     ('char', '('),
+#     ('char', ')'),
+#     ('char', ')')
+# ]
