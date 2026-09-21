@@ -42,6 +42,98 @@ simple_arithmetic_grammar = {
     "digit": [[any_terminal_in("0123456789")]]
 }
 
+from typing import Literal, Generator
+
+type Token = tuple[Literal['string literal'] | Literal['identifier'] | Literal['char'], str] \
+    | tuple[Literal['number'], int]
+
+def tokenizer(document: str) -> Generator[Token]:
+
+    current_token = ""
+    current_state = None # type: ignore
+
+    WHITESPACE = lambda c : c in ' \t\n'
+
+    ALLOWED_SPECIAL_CHARS = lambda c : c in '()[]{}<>=+*/-.'
+
+    IDENTIFIER_BEGIN = lambda c : "a" <= c <= "z" or "A" <= c <= "Z" or c == '_'
+    NUMBER = lambda c : "0" <= c <= "9"
+    IDENTIFIER_BODY = lambda c : IDENTIFIER_BEGIN(c) or NUMBER(c)
+
+    STRING_BEGIN = lambda c : c == "\""
+    STRING_END = lambda c : c == "\""
+    STRING_ESCAPE = lambda c : c == "\\"
+
+
+
+    def escaped_string(next_char) -> Generator[Token]:
+        nonlocal current_state, current_token
+        current_token += next_char
+        current_state = string
+        yield from []
+
+    def string(next_char) -> Generator[Token]:
+        nonlocal current_state, current_token
+
+        if STRING_END(next_char) :
+            yield ('string literal', current_token)
+        elif STRING_ESCAPE(next_char) :
+            current_state = escaped_string
+        else :
+            current_token += next_char
+            current_state = string
+
+    def identifier(next_char) -> Generator[Token]:
+        nonlocal current_state, current_token
+
+        if IDENTIFIER_BODY(next_char):
+            current_token += next_char
+        else:
+            current_state = document_begin
+            yield ('identifier', current_token)
+            yield from document_begin(next_char)
+        yield from []
+
+    def number(next_char) -> Generator[Token]:
+        nonlocal current_state, current_token
+        if NUMBER(next_char) :
+            current_token += next_char
+        else :
+            yield ('number', int(current_token))
+            current_state = document_begin
+            yield from document_begin(next_char)
+        yield from []
+
+    def document_begin(next_char: str) -> Generator[Token]:
+        nonlocal current_state
+
+        if IDENTIFIER_BEGIN(next_char) :
+            current_state = identifier
+            yield from identifier(next_char)
+        elif STRING_BEGIN(next_char):
+            current_state = string
+        elif NUMBER(next_char) :
+            current_state = number
+            yield from number(next_char)
+        elif WHITESPACE(next_char):
+            pass
+        elif ALLOWED_SPECIAL_CHARS(next_char):
+            yield ('char', next_char)
+        else:
+            raise SyntaxError(f'unexpected character: "{next_char}"')
+        yield from []
+    current_state:Callable[..., Generator[Token]] = document_begin
+
+    def document_loop() -> Generator[Token]:
+        for character in document :
+            yield from current_state(character)
+
+    for token in document_loop():
+        yield token
+        current_token = ""
+
+
+
 def is_token_terminal(token: str | Terminal | None):
     return type(token) != str
 
@@ -280,14 +372,21 @@ class Parser:
         
 
 
-r = Recognizer(document="(1+2)+((((((((((((((((((((((((((((((3))))))))))))))))))))))))))))))))))))))))))))))))))))+4)")
-
-r.earley_recognize()
-
-root = Parser(document=r.document, items=r.state_sets).create_tree()
-
 from pprint import pprint
+# r = Recognizer(document="(1+2)+(3)+4)")
+
+# r.earley_recognize()
+
+# root = Parser(document=r.document, items=r.state_sets).create_tree()
+
+
+# pprint(
+#     root.to_printable_graph()
+# )
+
 
 pprint(
-    root.to_printable_graph()
+    list(tokenizer(""" pprint(
+     root.to_printable_graph()
+ )"""))
 )
