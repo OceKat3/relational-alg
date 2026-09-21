@@ -422,7 +422,7 @@ def document_to_parse_tree(document:str) -> Parser.Node:
     return root
 
 
-root = document_to_parse_tree("3*4+5+6")
+root = document_to_parse_tree("3+4*5")
 
 pprint(
     root.to_printable_graph()
