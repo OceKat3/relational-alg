@@ -32,12 +32,26 @@ def any_special_char_in(s:str):
         return token[0] == 'char' and token[1] == s
     return hook_str_of_function(predicate, s)
 
+literal = any_special_char_in
+
 arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["product"], ["product", any_special_char_in("+"), "sum"]],
-    "product": [["factor"], ["factor", any_special_char_in("*"), "product"]],
-    "factor": [["number"], [any_special_char_in("("), "sum", any_special_char_in(")")]],
-    "number": [[number]]
+    "sum": [["product"], ["sum", any_special_char_in("+"), "sum"]],
+    "product": [["factor"], ["product", any_special_char_in("*"), "product"]],
+    "factor": [[number], [any_special_char_in("("), "sum", any_special_char_in(")")]],
+}
+
+relational_algebra_grammar = {
+    START_SYMBOL: [["input"]],
+    "input": [["statement", literal(" ;")], ["statement", literal(';'), START_SYMBOL]],
+    "statement": [["expression"], ["create_relation"]],
+
+    "expression": [
+        ["unary_operator", literal('['), "expression", literal(']'), literal('('), "expression", literal(')')],
+        ["expression"]
+    ],
+    "unary_operator": [[literal_identifier("select")], [literal_identifier("project")], [literal_identifier("rename")]],
+
 }
 
 """
@@ -69,7 +83,7 @@ def tokenizer(document: str) -> Generator[Token]:
 
     WHITESPACE = lambda c : c in ' \t\n'
 
-    ALLOWED_SPECIAL_CHARS = lambda c : c in '()[]{}<>=+*/-.'
+    ALLOWED_SPECIAL_CHARS = lambda c : c in '()[]{}<>=+*/-.,'
 
     IDENTIFIER_BEGIN = lambda c : "a" <= c <= "z" or "A" <= c <= "Z" or c == '_'
     NUMBER = lambda c : "0" <= c <= "9"
