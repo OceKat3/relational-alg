@@ -22,37 +22,161 @@ def number(token:Token) -> bool:
     return token[0] == 'number'
 hook_str_of_function(number, 'number')
 
+protected_identifiers = set()
+
 def literal_identifier(s:str):
+    global protected_identifiers
+    protected_identifiers.add(s)
+
     def predicate(token:Token) -> bool:
         return token[0] == 'identifier' and token[1] == s
     return hook_str_of_function(predicate, s)
 
-def any_special_char_in(s:str):
+def identifier(token:Token):
+    return token[0] == 'identifier' and token[1] not in protected_identifiers
+hook_str_of_function(identifier, 'identifier')
+
+def special_char(s:str):
     def predicate(token:Token) -> bool:
         return token[0] == 'char' and token[1] == s
     return hook_str_of_function(predicate, s)
 
-literal = any_special_char_in
+literal = special_char
 
 arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["product"], ["sum", any_special_char_in("+"), "sum"]],
-    "product": [["factor"], ["product", any_special_char_in("*"), "product"]],
-    "factor": [[number], [any_special_char_in("("), "sum", any_special_char_in(")")]],
+    "sum": [["product"], ["sum", special_char("+"), "sum"]],
+    "product": [["factor"], ["product", special_char("*"), "product"]],
+    "factor": [[number], [special_char("("), "sum", special_char(")")]],
 }
 
 relational_algebra_grammar = {
     START_SYMBOL: [["input"]],
-    "input": [["statement", literal(" ;")], ["statement", literal(';'), START_SYMBOL]],
-    "statement": [["expression"], ["create_relation"]],
-
-    "expression": [
-        ["unary_operator", literal('['), "expression", literal(']'), literal('('), "expression", literal(')')],
-        ["expression"]
+    "input": [["statement"], ["statement", special_char(";")], ["statement", special_char(';'), "input"]],
+    "statement": [
+        ["relation_expression"], 
+        ["create_relation"],
+        ["insert_into_relation"],
     ],
-    "unary_operator": [[literal_identifier("select")], [literal_identifier("project")], [literal_identifier("rename")]],
 
+    "create_relation":[],
+    "insert_into_relation":[],
+
+    "relation_expression": [
+        ["unary_relational_expression"],
+        ["inner_relation_expression", "binary_relational_operator", "inner_relation_expression"],
+        [identifier]
+    ],
+
+    "inner_relation_expression": [
+        ["unary_relational_expression"],
+        [special_char('('), "inner_relation_expression", "binary_relational_operator", "inner_relation_expression", special_char(')')],
+        [identifier]
+    ],
+
+    "unary_relational_expression": [
+        [literal_identifier("select"), special_char('['), "condition", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
+        [literal_identifier("project"), special_char('['), "identifier_list", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
+        [literal_identifier("rename"), special_char('['), "rename_list", special_char(']'), special_char('('), "relation_expression", special_char(')')]
+    ],
+    "binary_relational_operator": [
+        [literal_identifier("union")], 
+        [literal_identifier("intersect")], 
+        ["cartesian_product"],
+        [literal_identifier("subtract")],
+        [literal_identifier("divide")],
+        
+    ],
+    "cartesian_product": [
+        [literal_identifier("cross")], 
+        [literal_identifier("cross"), literal_identifier("product")], 
+        [literal_identifier("cartesian"), literal_identifier("product")]
+    ],
+
+    "boolean_expression": [
+        ["disjunct"]
+    ],
+    "disjunct":[
+        ["conjunct", special_char('or'), "disjunct"],
+        ["conjunct"]
+    ],
+    "conjunct":[
+        ["boolean_factor", special_char('and'), "conjunct"],
+        ["boolean_factor"]
+    ],
+    "boolean_factor": [
+        [special_char('('), "boolean_expression", special_char(')')],
+        [special_char('not'), "boolean_expression"],
+        ["condition"],
+    ],
+
+    "condition":[
+        ["scalar"],
+        ["scalar", special_char('<>'), "scalar"],
+        ["scalar", special_char('='), "scalar"],
+        ["scalar", special_char('<>'), special_char('='), "scalar"],
+        ["scalar", special_char('='), special_char('='), "scalar"],
+    ],
+
+    "scalar":[
+        ["numeric_expression"],
+        ["attribute"]
+    ],
+
+    "boolean_literal": [
+        [literal("true")],
+        [literal("false")],
+        ["attribute"]
+    ],
+
+    "numeric_expression": [
+        ["additive"]
+    ],
+
+    "additive": [
+        ["multiplicative", special_char('+-'), "additive"],
+        ["multiplicative"]
+    ],
+    "multiplicative": [
+        ["factor", special_char('*/'), "multiplicative"],
+        ["factor"]
+    ],
+    "factor": [
+        [special_char('('), "numeric_expression", special_char(')')],
+        [number],
+        ["attribute"],
+    ],
+
+    "attribute": [
+        [identifier],
+        [identifier, special_char('.'), identifier]
+    ],
+
+    "identifier_list": [
+        [identifier],
+        [identifier, "identifier_list"],
+        [identifier, special_char(','), "identifier_list"]
+    ],
+
+    "rename_list": [
+        ["rename"],
+        ["rename", "rename_list"],
+        ["rename", special_char(','), "rename_list"]
+    ],
+    "rename": [
+        [identifier, special_char('-'), special_char('>'), identifier]
+    ]
+    
 }
+
+def check_grammar(grammar:grammartype):
+
+    for key in grammar:
+        for rule in grammar[key]:
+            for symbol in rule:
+                if type(symbol) == str :
+                    assert symbol in grammar, f"{key} -> ...{symbol}...,   {symbol} not found in grammar"
+check_grammar(relational_algebra_grammar)
 
 """
 [('number', 3), ('char', '+'), ('number', 4), ('char', '*'), ('number', 5)]
@@ -67,7 +191,7 @@ number + number * number
 
 simple_arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
-    "sum": [["number"], [any_special_char_in("("), "sum", any_special_char_in(")")], ["sum", any_special_char_in("+"), "sum"]],
+    "sum": [["number"], [special_char("("), "sum", special_char(")")], ["sum", special_char("+"), "sum"]],
     "number": [[number]]
 }
 
@@ -83,7 +207,7 @@ def tokenizer(document: str) -> Generator[Token]:
 
     WHITESPACE = lambda c : c in ' \t\n'
 
-    ALLOWED_SPECIAL_CHARS = lambda c : c in '()[]{}<>=+*/-.,'
+    ALLOWED_SPECIAL_CHARS = lambda c : c in '()[]{}<>=+*/-.,;'
 
     IDENTIFIER_BEGIN = lambda c : "a" <= c <= "z" or "A" <= c <= "Z" or c == '_'
     NUMBER = lambda c : "0" <= c <= "9"
@@ -204,12 +328,12 @@ class ParsingItem:
 class Recognizer:
 
     document: list[Token]
-    grammar: grammartype = field(default_factory=lambda : arithmetic_grammar)
+    grammar: grammartype = field(default_factory=lambda : relational_algebra_grammar)
     state_sets: list[list[ParsingItem]] = field(default_factory=lambda : [])
 
     def item_already_exists(self, i, new_item:ParsingItem):
         return any(
-            other.rule == new_item.rule and other.progress == new_item.progress and other.start == new_item.start
+            other.rule == new_item.rule and other.progress == new_item.progress and other.start == new_item.start and other.goal == new_item.goal
             for other in self.state_sets[i]
         )
 
@@ -233,7 +357,7 @@ class Recognizer:
                 start = other_item.start,
                 progress = other_item.progress + 1,
                 rule = other_item.rule,
-                goal = other_item.goal
+                goal = other_item.goal,
             )
 
             if self.item_already_exists(i, next_item) : continue
@@ -275,6 +399,9 @@ class Recognizer:
             if self.item_already_exists(i+1, next_item) : return
             self.state_sets[i+1].append(next_item)
 
+    def diagnose_problem(self):
+        pass
+
     def earley_recognize(self):
 
         self.state_sets = [
@@ -289,6 +416,10 @@ class Recognizer:
         for i in range(len(self.document) + 1) :
             j = 0
             while j < len(self.state_sets[i]):
+
+                if 'input -> statement .  ;  (0)' in self.state_sets[i][j].__str__() :
+                    print(i, "!!!!!!!!!!! ", self.state_sets[i][j].action_needed)
+
                 match self.state_sets[i][j].action_needed:
                     case 'predict' :
                         self.predict(i, j)
@@ -299,8 +430,11 @@ class Recognizer:
                 j += 1
 
         was_parse_successful = any(
-            item.start == 0 and item.is_completed for item in self.state_sets[-1]
+            item.start == 0 and item.is_completed and item.goal==START_SYMBOL for item in self.state_sets[-1]
         )
+
+        if not was_parse_successful :
+            self.diagnose_problem()
 
         def remove_all_incomplete_items():
 
@@ -313,6 +447,10 @@ class Recognizer:
 
         print([len(x) for x in self.state_sets])
 
+        print(
+            self.repr_state_sets(self.state_sets)
+        )
+
         remove_all_incomplete_items()
 
         return was_parse_successful
@@ -322,8 +460,9 @@ class InvertedItem(ParsingItem):
     end: int = 0
 
     @staticmethod
-    def from_item(item:ParsingItem, i:int):
-        assert item.progress == len(item.rule)
+    def from_item(item:ParsingItem, i:int, unsafe=False):
+        if not unsafe:
+            assert item.progress == len(item.rule)
         return InvertedItem(
             start=i,
             end=i,
@@ -361,12 +500,12 @@ class Parser:
         
 
     @staticmethod
-    def invert_items(items: list[list[ParsingItem]]) -> list[list[InvertedItem]]:
+    def invert_items(items: list[list[ParsingItem]], unsafe=False) -> list[list[InvertedItem]]:
         out = [[] for x in items]
 
         for i, state_set in enumerate(items):
             for item in state_set :
-                out[item.start].append(InvertedItem.from_item(item, i))
+                out[item.start].append(InvertedItem.from_item(item, i, unsafe))
 
         return out
 
@@ -386,6 +525,8 @@ class Parser:
         item = self.get_max_length_item(i, symbol, end)
         print(str(item))
         self.seen_set.append(item)
+
+        print(f"={i}= {item.__str__()}")
 
         if symbol == START_SYMBOL and item.end != len(self.document) :
             raise SyntaxError(f'Failed to fully parse input')
@@ -410,8 +551,30 @@ class Parser:
             item=item,
             children=children
         )
-        
 
+@dataclass    
+class RelationalTreeReducer:
+
+    def create_node(self, kind, *children):
+        return (kind, children)
+
+    def reduce(self, node:Parser.Node):
+
+        match node.item.goal, *node.children :
+            case 'statement', Parser.Node() as child:
+                return self.create_node(
+                    'relation',
+                    self.reduce(child)
+                )
+            case 'unary_relational_expression', operation, _, Parser.Node() as phi, _, _, Parser.Node() as relation, _ :
+                assert not isinstance(operation, Parser.Node)
+                return self.create_node(
+                    operation[1],
+                    self.reduce(phi),
+                    self.reduce(relation)
+                )
+            case _:
+                return self.reduce(node.children[0])
 
 from pprint import pprint
 
@@ -436,7 +599,7 @@ def document_to_parse_tree(document:str) -> Parser.Node:
     return root
 
 
-root = document_to_parse_tree("3+4*5")
+root = document_to_parse_tree("project[idasdsd sasfy  asdufygasfd](people union employees);")
 
 pprint(
     root.to_printable_graph()
