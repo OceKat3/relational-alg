@@ -54,9 +54,9 @@ relational_algebra_grammar = {
     START_SYMBOL: [["input"]],
     "input": [["statement"], ["statement", special_char(";")], ["statement", special_char(';'), "input"]],
     "statement": [
-        ["relation_expression"], 
-        ["create_relation"],
-        ["insert_into_relation"],
+        ["relation_expression"],  # dql
+        ["create_relation"],      # ddl
+        ["insert_into_relation"], # dml
     ],
 
     "create_relation":[],
@@ -400,7 +400,57 @@ class Recognizer:
             self.state_sets[i+1].append(next_item)
 
     def diagnose_problem(self):
-        pass
+
+        """
+        1. invert the state sets, complete and incomplete
+        2. find the maximum k for which there is a ((0) ^ -> alpha (end=k)) (there may be multiple items)
+        3. since the parse failed, that item(s) still has a next_token. it is not complete
+        4. recurse through next_token until they are all terminals. Then output, "expected one of (terminal1, terminal2) at k" 
+        """
+
+        inverted_state_sets = Parser.invert_items(self.state_sets, unsafe=True)
+
+        def find_partially_completed_items(i:int, goal:str) -> list[InvertedItem]:
+
+            candidates = [item for item in inverted_state_sets[i] if item.goal == goal]
+
+            candidates = sorted(candidates, key=lambda item : item.end, reverse=False)
+            if len(candidates) == 0 :
+                print('no candidates', i, goal)
+                return []
+            
+            farthest_end = max(candidates, key=lambda c : c.end).end
+
+            return [item for item in candidates if item.end == farthest_end]
+            
+            # print(candidates)
+            # quit()
+
+        def diagnose_recursively(item:InvertedItem) -> set[Terminal]:
+
+            assert item.progress < len(item.rule)
+
+            if is_token_terminal(item.next_token) :
+                assert is_token_terminal(item.next_token)
+                return set([item.next_token]) #type: ignore
+            else :
+                next_goal = item.next_token
+                assert isinstance(next_goal, str)
+
+                items_which_would_have_completed_this_one = find_partially_completed_items(item.end, next_goal)
+
+                out:set[Terminal] = set()
+                for item in items_which_would_have_completed_this_one :
+                    out.update(diagnose_recursively(item))
+
+                return out
+        
+        possible_terminals = diagnose_recursively(
+            find_partially_completed_items(0, START_SYMBOL)[0]
+        )
+
+        print([x.__str__() for x in possible_terminals])
+
 
     def earley_recognize(self):
 
@@ -435,6 +485,7 @@ class Recognizer:
 
         if not was_parse_successful :
             self.diagnose_problem()
+            quit()
 
         def remove_all_incomplete_items():
 
@@ -468,7 +519,7 @@ class InvertedItem(ParsingItem):
             end=i,
             goal=item.goal,
             rule=item.rule,
-            progress=len(item.rule)
+            progress=item.progress
         )
 
 class Parser:
@@ -558,6 +609,7 @@ class RelationalTreeReducer:
     def create_node(self, kind, *children):
         return (kind, children)
 
+
     def reduce(self, node:Parser.Node):
 
         match node.item.goal, *node.children :
@@ -573,8 +625,11 @@ class RelationalTreeReducer:
                     self.reduce(phi),
                     self.reduce(relation)
                 )
-            case _:
-                return self.reduce(node.children[0])
+            case _, Parser.Node() as child:
+                return self.reduce(child)
+            case _, token :
+                assert not isinstance(token, Parser.Node)
+                return 
 
 from pprint import pprint
 
@@ -599,7 +654,7 @@ def document_to_parse_tree(document:str) -> Parser.Node:
     return root
 
 
-root = document_to_parse_tree("project[idasdsd sasfy  asdufygasfd](people union employees);")
+root = document_to_parse_tree("project [col1 col2] (people union employees")
 
 pprint(
     root.to_printable_graph()
