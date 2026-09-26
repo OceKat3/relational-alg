@@ -197,12 +197,13 @@ simple_arithmetic_grammar = {
 
 from typing import Literal, Generator
 
-type Token = tuple[Literal['string literal'] | Literal['identifier'] | Literal['char'], str] \
-    | tuple[Literal['number'], int]
+type Token = tuple[Literal['string literal'] | Literal['identifier'] | Literal['char'], str, int] \
+    | tuple[Literal['number'], int, int]
 
 def tokenizer(document: str) -> Generator[Token]:
 
     current_token = ""
+    document_index = 0
     current_state = None # type: ignore
 
     WHITESPACE = lambda c : c in ' \t\n'
@@ -227,7 +228,7 @@ def tokenizer(document: str) -> Generator[Token]:
         nonlocal current_state, current_token
 
         if STRING_END(next_char) :
-            yield ('string literal', current_token)
+            yield ('string literal', current_token, document_index)
         elif STRING_ESCAPE(next_char) :
             current_state = escaped_string
         else :
@@ -241,7 +242,7 @@ def tokenizer(document: str) -> Generator[Token]:
             current_token += next_char
         else:
             current_state = document_begin
-            yield ('identifier', current_token)
+            yield ('identifier', current_token, document_index-1)
             yield from document_begin(next_char)
         yield from []
 
@@ -250,7 +251,7 @@ def tokenizer(document: str) -> Generator[Token]:
         if NUMBER(next_char) :
             current_token += next_char
         else :
-            yield ('number', int(current_token))
+            yield ('number', int(current_token), document_index)
             current_state = document_begin
             yield from document_begin(next_char)
         yield from []
@@ -269,15 +270,17 @@ def tokenizer(document: str) -> Generator[Token]:
         elif WHITESPACE(next_char):
             pass
         elif ALLOWED_SPECIAL_CHARS(next_char):
-            yield ('char', next_char)
+            yield ('char', next_char, document_index)
         else:
             raise SyntaxError(f'unexpected character: "{next_char}"')
         yield from []
     current_state:Callable[..., Generator[Token]] = document_begin
 
     def document_loop() -> Generator[Token]:
+        nonlocal document_index
         for character in document :
             yield from current_state(character)
+            document_index += 1
 
         if len(current_token) > 0 :
             if current_state in [identifier, number] :
@@ -328,6 +331,7 @@ class ParsingItem:
 class Recognizer:
 
     document: list[Token]
+    real_string_input: str
     grammar: grammartype = field(default_factory=lambda : relational_algebra_grammar)
     state_sets: list[list[ParsingItem]] = field(default_factory=lambda : [])
 
@@ -401,6 +405,9 @@ class Recognizer:
 
     def diagnose_problem(self):
 
+        if len(self.document) == 0 : 
+            raise SyntaxError('recognizer got empty document, or no tokens were read')
+
         """
         1. invert the state sets, complete and incomplete
         2. find the maximum k for which there is a ((0) ^ -> alpha (end=k)) (there may be multiple items)
@@ -415,42 +422,73 @@ class Recognizer:
             candidates = [item for item in inverted_state_sets[i] if item.goal == goal]
 
             candidates = sorted(candidates, key=lambda item : item.end, reverse=False)
+            
             if len(candidates) == 0 :
-                print('no candidates', i, goal)
+                # print('no candidates', i, goal)
                 return []
             
             farthest_end = max(candidates, key=lambda c : c.end).end
-
-            return [item for item in candidates if item.end == farthest_end]
+            # print(goal, farthest_end)
+            return [item for item in candidates if item.end >= farthest_end/2]
             
             # print(candidates)
             # quit()
 
-        def diagnose_recursively(item:InvertedItem) -> set[Terminal]:
+        def diagnose_recursively(item:InvertedItem) -> set[InvertedItem]:
 
-            assert item.progress < len(item.rule)
+            # assert item.progress < len(item.rule)
+            if item.progress == len(item.rule) : return set()
 
             if is_token_terminal(item.next_token) :
                 assert is_token_terminal(item.next_token)
-                return set([item.next_token]) #type: ignore
+                return set([item]) #type: ignore
             else :
                 next_goal = item.next_token
                 assert isinstance(next_goal, str)
 
                 items_which_would_have_completed_this_one = find_partially_completed_items(item.end, next_goal)
 
-                out:set[Terminal] = set()
+                out:set[InvertedItem] = set()
                 for item in items_which_would_have_completed_this_one :
                     out.update(diagnose_recursively(item))
 
                 return out
         
-        possible_terminals = diagnose_recursively(
+        items_waiting_for_terminal = diagnose_recursively(
             find_partially_completed_items(0, START_SYMBOL)[0]
         )
 
-        print([x.__str__() for x in possible_terminals])
+        farthest_parse_distance = max(items_waiting_for_terminal, key=lambda c : c.end).end
+        farthest_parsed_items = [x for x in items_waiting_for_terminal if x.end == farthest_parse_distance and x.end > 0]
 
+        def get_error_message(problem_items: list[InvertedItem]) -> str:
+
+            problem_items = sorted(problem_items,key=lambda item : len(item.goal))
+
+            previous_token_document_pos = self.document[problem_items[0].end - 1][2]
+
+            preview_slice = slice(max(0,previous_token_document_pos-40), min(previous_token_document_pos+5, len(self.real_string_input)))
+
+            document_neighbourhood = self.real_string_input[preview_slice]
+            marker = ''.join([('^' if i == previous_token_document_pos else ' ') for i in range(len(self.real_string_input))][preview_slice])
+
+            def terminal_to_str(item:InvertedItem):
+                t:Terminal = item.next_token #type: ignore
+                if t == identifier : return 'an identifier'
+                if t == number : return 'a number'
+                return f"'{t.__str__()}'"
+
+            recommendations = []
+            for item in problem_items :
+                recommendation = terminal_to_str(item)
+                if recommendation not in recommendations :
+                    recommendations.append(recommendation)
+
+            return f"did you mean:\n{', or '.join(recommendations)} \nat '{document_neighbourhood}' ?" \
+                 f"\n     {marker}"
+        
+
+        raise SyntaxError(get_error_message(farthest_parsed_items))
 
     def earley_recognize(self):
 
@@ -515,12 +553,19 @@ class InvertedItem(ParsingItem):
         if not unsafe:
             assert item.progress == len(item.rule)
         return InvertedItem(
-            start=i,
+            start=item.start,
             end=i,
             goal=item.goal,
             rule=item.rule,
             progress=item.progress
         )
+
+    def __hash__(self) -> int:
+        return (f"{self.start} {self.goal} {id(self.rule)} {self.progress} {self.end}").__hash__()
+
+    def __str__(self) -> str:
+        return f"({self.start}) {self.goal} -> {' '.join(map(self.token_to_str, self.rule[:self.progress]))} . {' '.join(map(self.token_to_str, self.rule[self.progress:]))}  ({self.end})"
+    
 
 class Parser:
 
@@ -637,9 +682,9 @@ def document_to_parse_tree(document:str) -> Parser.Node:
 
     tokens = list(tokenizer(document))
 
-    pprint(tokens)
+    # pprint(tokens)
 
-    recognizer = Recognizer(document=tokens)
+    recognizer = Recognizer(document=tokens, real_string_input=document)
     recognizer.earley_recognize()
 
     # print(
@@ -653,12 +698,23 @@ def document_to_parse_tree(document:str) -> Parser.Node:
     root = Parser(document=recognizer.document, items=recognizer.state_sets).create_tree()
     return root
 
+print()
+try :
+    document_to_parse_tree("project [col1 col2] people union asdasd)")
+except SyntaxError as e :
+    print(e.msg)
+print()
+try :
+    document_to_parse_tree("project [col1 col2] (people union )")
+except SyntaxError as e :
+    print(e.msg)
 
-root = document_to_parse_tree("project [col1 col2] (people union employees")
 
-pprint(
-    root.to_printable_graph()
-)
+root = document_to_parse_tree("project [col1 col2] (mytable")
+
+# pprint(
+#     root.to_printable_graph()
+# )
 
 
 
