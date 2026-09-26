@@ -120,7 +120,7 @@ relational_algebra_grammar = {
 
     "scalar":[
         ["numeric_expression"],
-        ["attribute"]
+        ["attribute"],
     ],
 
     "boolean_literal": [
@@ -135,7 +135,8 @@ relational_algebra_grammar = {
 
     "additive": [
         ["multiplicative", special_char('+-'), "additive"],
-        ["multiplicative"]
+        ["multiplicative"],
+        [special_char('-'), "multiplicative"],
     ],
     "multiplicative": [
         ["factor", special_char('*/'), "multiplicative"],
@@ -168,6 +169,72 @@ relational_algebra_grammar = {
     ]
     
 }
+
+from typing import Any
+class AlgebraNode:
+    def eval(self, *a, **kwa) -> Any:
+        raise NotImplemented
+
+
+class ScalarExpression(AlgebraNode):
+    def eval(self, bound_identifiers:dict[str, Any]) -> int | float | str:
+        raise NotImplemented
+
+class BooleanExpression(AlgebraNode):
+    def eval(self, bound_identifiers:dict[str, Any]) -> bool:
+        raise NotImplemented
+
+class RelationExpression(AlgebraNode):
+    def eval(self) -> list:
+        raise NotImplemented
+
+@dataclass
+class UnaryRelational(AlgebraNode):
+    relation: RelationExpression
+
+@dataclass
+class Project(UnaryRelational):
+    columns: list[str]
+
+@dataclass
+class Select(UnaryRelational):
+    predicate: BooleanExpression
+
+@dataclass
+class Rename(UnaryRelational):
+    renames: dict[str, str]
+
+from typing import Callable
+
+@dataclass
+class BinaryScalarExpression(ScalarExpression):
+    left:ScalarExpression
+    right:ScalarExpression
+
+    operation: Callable
+
+    def eval(self, *a, **kwa) -> int | float | str:
+        # TODO type safety
+        return self.operation(
+            self.left.eval(*a, **kwa),
+            self.right.eval(*a, **kwa)
+        )
+
+class Add(BinaryScalarExpression):
+    operation = lambda x, y : x+y
+class Subtract(BinaryScalarExpression):
+    operation = lambda x, y : x-y
+class Multiply(BinaryScalarExpression):
+    operation = lambda x, y : x*y
+class Divide(BinaryScalarExpression):
+    operation = lambda x, y : x/y
+
+class Unm(ScalarExpression):
+    arg:ScalarExpression
+    def eval(self, *a, **kwa) -> int | float | str:
+        # TODO type safety
+        return -self.arg.eval(*a, **kwa)
+
 
 def check_grammar(grammar:grammartype):
 
@@ -534,11 +601,11 @@ class Recognizer:
                     if item.is_completed
                 ]
 
-        print([len(x) for x in self.state_sets])
+        # print([len(x) for x in self.state_sets])
 
-        print(
-            self.repr_state_sets(self.state_sets)
-        )
+        # print(
+        #     self.repr_state_sets(self.state_sets)
+        # )
 
         remove_all_incomplete_items()
 
@@ -561,10 +628,10 @@ class InvertedItem(ParsingItem):
         )
 
     def __hash__(self) -> int:
-        return (f"{self.start} {self.goal} {id(self.rule)} {self.progress} {self.end}").__hash__()
+        return str(self).__hash__()
 
     def __str__(self) -> str:
-        return f"({self.start}) {self.goal} -> {' '.join(map(self.token_to_str, self.rule[:self.progress]))} . {' '.join(map(self.token_to_str, self.rule[self.progress:]))}  ({self.end})"
+        return f"{self.start} {self.goal} -> {' '.join(map(self.token_to_str, self.rule[:self.progress]))} . {' '.join(map(self.token_to_str, self.rule[self.progress:]))}  ({self.end})"
     
 
 class Parser:
@@ -577,7 +644,7 @@ class Parser:
         self.inverted_items = Parser.invert_items(items)
         self.document = document
 
-        print(Recognizer.repr_state_sets(self.inverted_items))
+        # print(Recognizer.repr_state_sets(self.inverted_items))
 
     @dataclass
     class Node:
@@ -617,12 +684,12 @@ class Parser:
     def create_tree(self, i=0, symbol=START_SYMBOL, end=-1, recursive_depth:int = 0) -> Node :
         if end == -1 : end = len(self.document)
 
-        print('    ' * recursive_depth, i, end=" ")
+        print('    ' * recursive_depth, end=" ")
         item = self.get_max_length_item(i, symbol, end)
         print(str(item))
         self.seen_set.append(item)
 
-        print(f"={i}= {item.__str__()}")
+        # print(f"={i}= {item.__str__()}")
 
         if symbol == START_SYMBOL and item.end != len(self.document) :
             raise SyntaxError(f'Failed to fully parse input')
@@ -648,33 +715,48 @@ class Parser:
             children=children
         )
 
+
 @dataclass    
 class RelationalTreeReducer:
 
     def create_node(self, kind, *children):
         return (kind, children)
 
-
-    def reduce(self, node:Parser.Node):
+    def reduce(self, node:Parser.Node) -> Any:
 
         match node.item.goal, *node.children :
-            case 'statement', Parser.Node() as child:
-                return self.create_node(
-                    'relation',
-                    self.reduce(child)
+            
+            case 'unary_relational_expression', ('identifier', 'select', _), _, Parser.Node() as phi, _, _, Parser.Node() as relation, _ :
+                return Select(
+                    self.reduce(relation),
+                    self.reduce(phi)
                 )
-            case 'unary_relational_expression', operation, _, Parser.Node() as phi, _, _, Parser.Node() as relation, _ :
-                assert not isinstance(operation, Parser.Node)
-                return self.create_node(
-                    operation[1],
-                    self.reduce(phi),
-                    self.reduce(relation)
+            case 'unary_relational_expression', ('identifier', 'project', _), _, Parser.Node() as column_list, _, _, Parser.Node() as relation, _ :
+                return Project(
+                    self.reduce(relation),
+                    self.reduce(column_list)
                 )
+            case 'unary_relational_expression', ('identifier', 'rename', _), _, Parser.Node() as renames, _, _, Parser.Node() as relation, _ :
+                return Rename(
+                    self.reduce(relation),
+                    self.reduce(renames)
+                )
+
+            case 'identifier_list', ('identifier', id, _) :
+                return [id]
+
+            case 'identifier_list', ('identifier', id, _), Parser.Node() as rest_of_list :
+                return [id] + self.reduce(rest_of_list)
+            case 'identifier_list', ('identifier', id, _), _, Parser.Node() as rest_of_list :
+                return [id] + self.reduce(rest_of_list)
+            
+            
             case _, Parser.Node() as child:
                 return self.reduce(child)
+            
             case _, token :
                 assert not isinstance(token, Parser.Node)
-                return 
+             
 
 from pprint import pprint
 
@@ -696,26 +778,21 @@ def document_to_parse_tree(document:str) -> Parser.Node:
     # )
 
     root = Parser(document=recognizer.document, items=recognizer.state_sets).create_tree()
-    return root
+
+    actualroot = RelationalTreeReducer().reduce(root)
+
+    return actualroot
+
+
+
+root = document_to_parse_tree("project [col1 col2] (mytable)")
 
 print()
-try :
-    document_to_parse_tree("project [col1 col2] people union asdasd)")
-except SyntaxError as e :
-    print(e.msg)
-print()
-try :
-    document_to_parse_tree("project [col1 col2] (people union )")
-except SyntaxError as e :
-    print(e.msg)
-
-
-root = document_to_parse_tree("project [col1 col2] (mytable")
+pprint(root)
 
 # pprint(
 #     root.to_printable_graph()
 # )
-
 
 
 # assert list(tokenizer(""" 
