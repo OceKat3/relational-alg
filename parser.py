@@ -5,6 +5,7 @@ from typing import Any, Callable
 type Terminal = Callable[[Token], bool]
 type grammartype = dict[str, list[list[str | Terminal]]]
 
+from typing import Callable
 
 START_SYMBOL = "^"
 
@@ -38,7 +39,7 @@ hook_str_of_function(identifier, 'identifier')
 
 def special_char(s:str):
     def predicate(token:Token) -> bool:
-        return token[0] == 'char' and token[1] == s
+        return token[0] == 'char' and token[1] in s
     return hook_str_of_function(predicate, s)
 
 literal = special_char
@@ -85,12 +86,25 @@ relational_algebra_grammar = {
         ["cartesian_product"],
         [literal_identifier("subtract")],
         [literal_identifier("divide")],
+        ["join"],
         
     ],
     "cartesian_product": [
         [literal_identifier("cross")], 
         [literal_identifier("cross"), literal_identifier("product")], 
         [literal_identifier("cartesian"), literal_identifier("product")]
+    ],
+    "join": [
+        ["natural_join"],
+        ["theta_join"]
+    ],
+    "natural_join":[
+        [literal_identifier('join')],
+        [literal_identifier('outer'), literal_identifier('join')],
+        [literal_identifier('left'), literal_identifier('join')],
+    ],
+    "theta_join":[
+        ["natural_join", literal('['), "condition", literal(']')]
     ],
 
     "boolean_expression": [
@@ -111,16 +125,11 @@ relational_algebra_grammar = {
     ],
 
     "condition":[
-        ["scalar"],
-        ["scalar", special_char('<>'), "scalar"],
-        ["scalar", special_char('='), "scalar"],
-        ["scalar", special_char('<>'), special_char('='), "scalar"],
-        ["scalar", special_char('='), special_char('='), "scalar"],
-    ],
-
-    "scalar":[
-        ["numeric_expression"],
-        ["attribute"],
+        ["scalar_expression"],
+        ["scalar_expression", special_char('<>'), "scalar_expression"],
+        ["scalar_expression", special_char('='), "scalar_expression"],
+        ["scalar_expression", special_char('<>'), special_char('='), "scalar_expression"],
+        ["scalar_expression", special_char('='), special_char('='), "scalar_expression"],
     ],
 
     "boolean_literal": [
@@ -129,7 +138,7 @@ relational_algebra_grammar = {
         ["attribute"]
     ],
 
-    "numeric_expression": [
+    "scalar_expression": [
         ["additive"]
     ],
 
@@ -143,9 +152,14 @@ relational_algebra_grammar = {
         ["factor"]
     ],
     "factor": [
-        [special_char('('), "numeric_expression", special_char(')')],
-        [number],
+        [special_char('('), "scalar_expression", special_char(')')],
+        ["number"],
         ["attribute"],
+    ],
+    "number":[
+        [number],
+        [number, special_char('.'), number],
+        [special_char('.'), number],
     ],
 
     "attribute": [
@@ -170,11 +184,39 @@ relational_algebra_grammar = {
     
 }
 
+
 from typing import Any
+
+@dataclass
+class Relation:
+    name: str
+    cols: list[str]
+    data: list[list[str | int | float]]
+
+    _column_lookup: dict[str, int]
+
+    def __init__(self, cols:list[str], data:list[list[str|int|float]]) -> None:
+        self.cols = cols
+        self.data = data
+
+        self._column_lookup = dict(
+            (col, i) for i, col in enumerate(cols)
+        )
+
+    def index(self, i:int) -> BoundTuple:
+        return BoundTuple(self.name, self.data[i], self._column_lookup)
+
+@dataclass
+class BoundTuple:
+    tablename: str
+    data: list[str | int | float]
+    column_lookup: dict[str, int]
+
+
+
 class AlgebraNode:
     def eval(self, *a, **kwa) -> Any:
         raise NotImplemented
-
 
 class ScalarExpression(AlgebraNode):
     def eval(self, bound_identifiers:dict[str, Any]) -> int | float | str:
@@ -185,33 +227,119 @@ class BooleanExpression(AlgebraNode):
         raise NotImplemented
 
 class RelationExpression(AlgebraNode):
-    def eval(self) -> list:
+    def eval(self) -> Relation:
         raise NotImplemented
 
 @dataclass
-class UnaryRelational(AlgebraNode):
+class NamedAttribute(ScalarExpression):
+    attribute_name: str
+    def eval(self, bound_tuples:list[BoundTuple]):
+        # possible_values = 
+        pass
+
+@dataclass
+class NamedAmbiguousAttribute(ScalarExpression):
+    attribute_name: str
+    table_name: str | None
+    def eval(self, bound_tuples:list[BoundTuple]):
+        pass
+
+@dataclass
+class NamedRelation(RelationExpression):
+    relation_name: str
+
+@dataclass
+class UnaryRelational(RelationExpression):
     relation: RelationExpression
+
+    def eval(self) -> Relation:
+        return self.operation(self.relation.eval())
+
+    def operation(self, r:Relation) -> Relation:
+        raise NotImplemented
+
+def project(self:Project, r:Relation) -> Relation:
+    raise NotImplemented
+def select(self:Project, r:Relation) -> Relation:
+    raise NotImplemented
+def rename(self:Project, r:Relation) -> Relation:
+    raise NotImplemented
 
 @dataclass
 class Project(UnaryRelational):
     columns: list[str]
+    operation = project
 
 @dataclass
 class Select(UnaryRelational):
     predicate: BooleanExpression
-
+    operation = select
 @dataclass
 class Rename(UnaryRelational):
     renames: dict[str, str]
+    operation = rename
 
-from typing import Callable
+@dataclass
+class BinaryRelationalExpression(RelationExpression):
+    left:RelationExpression
+    right:RelationExpression
+
+    def operation(self, r1:Relation, r2:Relation) -> Relation:
+        raise NotImplemented
+
+    def eval(self, *a, **kwa) -> Relation:
+        return self.operation(
+            self.left.eval(*a, **kwa),
+            self.right.eval(*a, **kwa)
+        )
+
+def union(self, r1:Relation, r2:Relation) -> Relation:
+    raise NotImplemented
+
+def intersection(self, r1:Relation, r2:Relation) -> Relation:
+    raise NotImplemented
+
+def subtract(self, r1:Relation, r2:Relation) -> Relation:
+    raise NotImplemented
+
+def divide(self, r1:Relation, r2:Relation) -> Relation:
+    raise NotImplemented
+
+def join(self:GenericJoin, r1:Relation, r2:Relation) -> Relation:
+    raise NotImplemented
+
+def cartesian_product(self, r1:Relation, r2:Relation) -> Relation:
+    raise NotImplemented
+
+class Union(BinaryRelationalExpression):
+    operation = union
+class Intersection(BinaryRelationalExpression):
+    operation = intersection
+class RelationSubtract(BinaryRelationalExpression):
+    operation = subtract
+class RelationDivide(BinaryRelationalExpression):
+    operation = divide
+class CartesianProduct(BinaryRelationalExpression):
+    operation = cartesian_product
+
+type JoinSpecification = tuple[
+    Literal['join'],
+    Literal['natural'] | BooleanExpression,
+    Literal['inner'] | Literal['left'] | Literal['outer']
+]
+
+@dataclass
+class GenericJoin(BinaryRelationalExpression):
+    jointype:JoinSpecification
+    operation = join
+
 
 @dataclass
 class BinaryScalarExpression(ScalarExpression):
     left:ScalarExpression
     right:ScalarExpression
 
-    operation: Callable
+    operation: Callable = lambda : NotImplemented
 
     def eval(self, *a, **kwa) -> int | float | str:
         # TODO type safety
@@ -719,9 +847,6 @@ class Parser:
 @dataclass    
 class RelationalTreeReducer:
 
-    def create_node(self, kind, *children):
-        return (kind, children)
-
     def reduce(self, node:Parser.Node) -> Any:
 
         match node.item.goal, *node.children :
@@ -741,16 +866,55 @@ class RelationalTreeReducer:
                     self.reduce(relation),
                     self.reduce(renames)
                 )
+            
+            case 'relation_expression', Parser.Node() as left, Parser.Node(children=[('identifier', str() as operator, _)]), Parser.Node() as right :
+                match operator :
+                    case "union":
+                        return Union(self.reduce(left), self.reduce(right))
+                    case "intersect":
+                        return Intersection(self.reduce(left), self.reduce(right))
+                    case "subtract":
+                        return RelationSubtract(self.reduce(left), self.reduce(right))
+                    case "divide":
+                        return RelationDivide(self.reduce(left), self.reduce(right))
+            case 'relation_expression', Parser.Node() as left, Parser.Node() as operator, Parser.Node() as right :
+                match self.reduce(operator) :
+                    case ('join', _, _) as jointype :
+                        return GenericJoin(self.reduce(left), self.reduce(right), jointype)
+                    case 'cartesian_product' :
+                        return CartesianProduct(self.reduce(left), self.reduce(right))
+
+            case 'cartesian_product', _ :
+                return 'cartesian_product'
+            case 'natural_join', ('identifier', 'join', _) :
+                return ('join', 'natural', 'inner')
+            case 'natural_join', ('identifier', 'outer', _), ('identifier', 'join', _) :
+                return ('join', 'natural', 'outer')
+            case 'natural_join', ('identifier', 'left', _), ('identifier', 'join', _) :
+                return ('join', 'natural', 'left')
+            
 
             case 'identifier_list', ('identifier', id, _) :
                 return [id]
-
             case 'identifier_list', ('identifier', id, _), Parser.Node() as rest_of_list :
                 return [id] + self.reduce(rest_of_list)
             case 'identifier_list', ('identifier', id, _), _, Parser.Node() as rest_of_list :
                 return [id] + self.reduce(rest_of_list)
             
-            
+
+            case 'number', ('number', n, _) :
+                return n
+            case 'number', ('number', n, _), ('special_char', '.', _), ('number', m, _) :
+                from math import log10, floor
+                return float(n) + float(m) * (10) ** (-(1 + floor(log10(m))))
+            case 'number', ('special_char', '.', _), ('number', m, _) :
+                from math import log10, floor
+                return float(m) * (10) ** (-(1 + floor(log10(m))))
+
+
+            case 'attribute':
+                pass
+
             case _, Parser.Node() as child:
                 return self.reduce(child)
             
@@ -785,7 +949,7 @@ def document_to_parse_tree(document:str) -> Parser.Node:
 
 
 
-root = document_to_parse_tree("project [col1 col2] (mytable)")
+root = document_to_parse_tree("relation1 union relation2")
 
 print()
 pprint(root)
