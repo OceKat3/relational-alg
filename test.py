@@ -143,7 +143,7 @@ def parse_to_ast(document):
     parser = Parser(items = recognizer.state_sets, document=recognizer.document)
     parse_tree = parser.create_tree()
 
-    ast = RelationalTreeReducer().reduce(parse_tree)
+    ast = RelationalTreeReducer().ast(parse_tree)
 
     return ast
 
@@ -291,6 +291,143 @@ def test_grammar_17():
     else :
         raise AssertionError('expected syntaxerror')
 
+def test_grammar_thetajoin():
+
+    from parser import GenericJoin, Eq
+    
+    document1 = 'A join[cola=colb] B'
+
+    ast = parse_to_ast(document1)
+    
+    match ast :
+        case GenericJoin(
+            jointype=('join', Eq, 'inner')
+        ) :
+            return
+        
+    raise AssertionError(pformat(ast))
+
+def test_grammar_naturaljoin():
+
+    from parser import GenericJoin, Eq
+    
+    document1 = 'A left join B'
+
+    ast = parse_to_ast(document1)
+    
+    match ast :
+        case GenericJoin(
+            jointype=('join', 'natural', 'left')
+        ) :
+            return
+        
+    raise AssertionError(pformat(ast))
+
+def test_grammar_invalid_join():
+
+    document1 = 'A left outer join B'
+
+    try :
+        ast = parse_to_ast(document1)
+    except SyntaxError as e :
+        assert 'did you mean' in str(e)
+        assert 'join' in str(e)
+    else :
+        raise AssertionError('expected syntaxerror')
+
+# numeric and boolean evaluation tests
+
+def test_expression_bedmas():
+
+    document = "eval 1+2*3+4"
+
+    ast = parse_to_ast(document)
+
+    assert_equal(
+        11, ast.eval([], {})
+    )
+
+def test_expression_comparison():
+
+    document = "eval 1+5=2*3"
+
+    ast = parse_to_ast(document)
+
+    assert_equal(
+        True, ast.eval([], {})
+    )
+
+def test_expression_double_minus():
+
+    document = "eval 1--1"
+
+    ast = parse_to_ast(document)
+
+    assert_equal(
+        2, ast.eval([], {})
+    )
+
+# this test specifically tests for a regression in a grammar bug i fixed
+def test_expression_negation_in_multiplication():
+
+    document = "eval -2*-3"
+
+    ast = parse_to_ast(document)
+
+    assert_equal(
+        6, ast.eval([], {})
+    )
+
+def test_expression_inequality():
+
+    document = "eval 1<2 and 2>1"
+
+    ast = parse_to_ast(document)
+
+    assert_equal(
+        True, ast.eval([], {})
+    )
+
+def test_expression_bound_variable():
+    document = "eval a+b"
+
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    r = Relation(
+        cols = ['a', 'b'],
+        data=[[1, 2]]
+    )
+    
+    assert_equal(
+        3, ast.eval(
+            [r.index(0)], {}
+        )
+    )
+
+def test_relation_compute():
+    document = "compute[a+R.b as c](R)"
+
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    r = Relation(
+        cols = ['a', 'b'],
+        data=[[1, 2]]
+    )
+
+    result = ast.eval(
+            [], {"R": r}
+        )
+    
+    assert_equal(
+        [[1,2,3]], result.data
+    )
+    assert_equal(
+        ['R.a', 'R.b', 'c'], result.cols
+    )
 
 all_tests = [(key, value) for key, value in locals().items() if key.startswith('test')]
 
@@ -299,5 +436,5 @@ for name, t in all_tests :
         t()
         print(f'test passed: {name}')
     except BaseException as e:
-        print(f'test failed: {name}')
+        print(f'(!) test failed: {name}')
         print(type(e), e)

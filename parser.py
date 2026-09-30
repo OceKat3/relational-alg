@@ -26,7 +26,6 @@ hook_str_of_function(number, 'number')
 protected_identifiers = set()
 
 def literal_identifier(s:str):
-    global protected_identifiers
     protected_identifiers.add(s)
 
     def predicate(token:Token) -> bool:
@@ -53,11 +52,16 @@ arithmetic_grammar = {
 
 relational_algebra_grammar = {
     START_SYMBOL: [["input"]],
-    "input": [["statement"], ["statement", special_char(";")]],
+    "input": [
+        ["statement"], 
+        ["statement", special_char(";")]
+    ],
     "statement": [
         ["relation_expression"],  # dql
         ["create_relation"],      # ddl
         ["insert_into_relation"], # dml
+        [literal_identifier('eval'), "scalar_expression"],
+        [literal_identifier('eval'), "boolean_expression"],
     ],
 
     "create_relation":[],
@@ -216,7 +220,6 @@ from typing import Any
 
 @dataclass
 class Relation:
-    name: str
     cols: list[str]
     data: list[list[str | int | float]]
 
@@ -233,38 +236,35 @@ class Relation:
     def index(self, i:int) -> BoundTuple:
         return BoundTuple(self.data[i], self)
 
+    def bound_tuples(self) -> Generator[BoundTuple]:
+        for tup in self.data :
+            yield BoundTuple(tup, self) # TODO performance: malloc will slow things down here
+
 @dataclass
 class BoundTuple:
     data: list[str | int | float]
     table: Relation
 
 class AlgebraNode:
-    def eval(self, *a, **kwa) -> Any:
-        raise NotImplemented
+    allowed_types:list[type] = [object]
+
+    def is_allowed_type(self, arg:Any) -> bool:
+        return any(isinstance(arg, T) for T in self.allowed_types)
+
+    def eval(self, bound_tuples:list[BoundTuple], known_relations:dict[str, Relation]) -> Any:
+        raise NotImplementedError()
 
 class ScalarExpression(AlgebraNode):
-    def eval(self, bound_identifiers:dict[str, Any]) -> int | float | str:
-        raise NotImplemented
+    def eval(self, *a, **kwa) -> int | float | str:
+        raise NotImplementedError()
 
 class BooleanExpression(AlgebraNode):
-    def eval(self, bound_identifiers:dict[str, Any]) -> bool:
-        raise NotImplemented
+    def eval(self, *a, **kwa) -> bool:
+        raise NotImplementedError()
 
 class RelationExpression(AlgebraNode):
-    def eval(self) -> Relation:
-        raise NotImplemented
-
-@dataclass
-class ScalarLiteral(ScalarExpression):
-    val: str | float | int
-    def eval(self, *a, **kwa) -> int | float | str:
-        return self.val
-
-@dataclass
-class BooleanLiteral(BooleanExpression):
-    val: bool
-    def eval(self, *a, **kwa) -> bool:
-        return self.val
+    def eval(self, *a, **kwa) -> Relation:
+        raise NotImplementedError()
 
 from itertools import chain
 
@@ -327,30 +327,60 @@ class NamedAttribute(ScalarExpression):
         self._index_cache = possible_matches[0]
         i, j = possible_matches[0]
         return bound_tuples[i].data[j]
-        
 
 @dataclass
 class NamedRelation(RelationExpression):
     relation_name: str
+    def eval(self, bound_tuples, known_relations:dict[str, Relation]) -> Relation:
+        try :
+            relation = known_relations[self.relation_name]
+
+            return Relation(
+                cols = [
+                    '.'.join(([self.relation_name] + c.split('.'))[-2:])
+                    for c in relation.cols
+                ],
+                data=relation.data
+            )
+        except KeyError :
+            raise ValueError(f'Not a known relation: {self.relation_name}')
+
+@dataclass
+class ScalarLiteral(ScalarExpression):
+    val: str | float | int
+    def eval(self, *a, **kwa) -> int | float | str:
+        return self.val
+
+@dataclass
+class BooleanLiteral(BooleanExpression):
+    val: bool
+    def eval(self, *a, **kwa) -> bool:
+        return self.val
 
 @dataclass
 class UnaryRelational(RelationExpression):
     relation: RelationExpression
 
-    def eval(self) -> Relation:
-        return self.operation(self.relation.eval())
+    def eval(self, *a, **kwa) -> Relation:
+        return self.operation(self.relation.eval(*a, **kwa))
 
     def operation(self, r:Relation) -> Relation:
-        raise NotImplemented
+        raise NotImplementedError()
 
 def project(self:Project, r:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 def select(self:Project, r:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 def rename(self:Project, r:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 def compute(self:Compute, r:Relation) -> Relation:
-    raise NotImplemented
+    return Relation(
+        cols = r.cols + [c[1] for c in self.computes],
+        data=[
+            d.data + [computation.eval([d], {}) for computation, _ in self.computes]
+            for d in r.bound_tuples()
+        ]
+    )
 
 @dataclass
 class Project(UnaryRelational):
@@ -377,7 +407,7 @@ class BinaryRelationalExpression(RelationExpression):
     right:RelationExpression
 
     def operation(self, r1:Relation, r2:Relation) -> Relation:
-        raise NotImplemented
+        raise NotImplementedError()
 
     def eval(self, *a, **kwa) -> Relation:
         return self.operation(
@@ -386,22 +416,22 @@ class BinaryRelationalExpression(RelationExpression):
         )
 
 def union(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 
 def intersection(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 
 def subtract(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 
 def divide(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 
 def join(self:GenericJoin, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 
 def cartesian_product(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplemented
+    raise NotImplementedError()
 
 class Union(BinaryRelationalExpression):
     operation = union
@@ -431,10 +461,19 @@ class BinaryScalarExpression(ScalarExpression):
     left:ScalarExpression
     right:ScalarExpression
 
-    def operation(self, x, y) -> int | float | str : raise NotImplemented
+    allowed_types = [int, float]
+    verb:str = ''
+    def operation(self, x, y) -> int | float | str : raise NotImplementedError()
 
     def eval(self, *a, **kwa) -> int | float | str:
-        # TODO type safety
+        left = self.left.eval(*a, **kwa)
+        right = self.right.eval(*a, **kwa)
+        
+        if not self.is_allowed_type(left) :
+            raise TypeError(f'Cannot {self.verb} a {type(left)}')
+        if not self.is_allowed_type(right) :
+            raise TypeError(f'Cannot {self.verb} a {type(right)}')
+        
         return self.operation(
             self.left.eval(*a, **kwa),
             self.right.eval(*a, **kwa)
@@ -442,26 +481,33 @@ class BinaryScalarExpression(ScalarExpression):
 
 class Add(BinaryScalarExpression):
     operation = lambda self, x, y : x+y
+    verb = 'add'
+    allowed_types = [int, float, str]
 class Subtract(BinaryScalarExpression):
     operation = lambda self, x, y : x-y
+    verb = 'subtract'
 class Multiply(BinaryScalarExpression):
     operation = lambda self, x, y : x*y
+    verb = 'multiply'
 class Divide(BinaryScalarExpression):
     operation = lambda self, x, y : x/y
+    verb = 'divide'
 
 @dataclass
 class Unm(ScalarExpression):
     arg:ScalarExpression
     def eval(self, *a, **kwa) -> int | float | str:
-        # TODO type safety
-        return -self.arg.eval(*a, **kwa)
+        arg = self.arg.eval(*a, **kwa)
+        if not (isinstance(arg, int) or isinstance(arg, float)) :
+            raise TypeError(f'Cannot negate a {type(arg)}')
+        return -arg
 
 @dataclass
 class BinaryCondition(BooleanExpression):
     left: ScalarExpression
     right: ScalarExpression
 
-    def operation(self, x, y) -> bool: raise NotImplemented
+    def operation(self, x, y) -> bool: raise NotImplementedError()
 
     def eval(self, *a, **kwa) -> bool:
         return self.operation(
@@ -480,7 +526,7 @@ class BinaryBooleanExpression(BooleanExpression):
     left: BooleanExpression
     right: BooleanExpression
 
-    def operation(self, x, y) -> bool: raise NotImplemented
+    def operation(self, x, y) -> bool: raise NotImplementedError()
 
     def eval(self, *a, **kwa) -> bool:
         return self.operation(
@@ -764,7 +810,7 @@ class Recognizer:
             
             farthest_end = max(candidates, key=lambda c : c.end).end
             # print(goal, farthest_end)
-            return [item for item in candidates if item.end >= farthest_end/2]
+            return [item for item in candidates if item.end >= farthest_end/2 or True]
             
             # print(candidates)
             # quit()
@@ -997,6 +1043,13 @@ def dict_union(d1:dict, d2:dict):
 @dataclass    
 class RelationalTreeReducer:
 
+    def ast(self, node:Parser.Node) -> AlgebraNode:
+
+        root = self.reduce(node)
+        assert isinstance(root, AlgebraNode)
+
+        return root
+
     def reduce(self, node:Parser.Node) -> Any:
         
         match node.item.goal, *node.children :
@@ -1063,13 +1116,16 @@ class RelationalTreeReducer:
 
             case 'cartesian_product', _ :
                 return 'cartesian_product'
+            
             case 'natural_join', ('identifier', 'join', _) :
                 return ('join', 'natural', 'inner')
             case 'natural_join', ('identifier', 'outer', _), ('identifier', 'join', _) :
                 return ('join', 'natural', 'outer')
             case 'natural_join', ('identifier', 'left', _), ('identifier', 'join', _) :
                 return ('join', 'natural', 'left')
-            
+
+            case 'theta_join', Parser.Node() as jointype, _, Parser.Node() as condition, _ :
+                return ('join', self.reduce(condition), self.reduce(jointype)[2])
 
             case 'identifier_list', Parser.Node() as attribute :
                 return [self.reduce(attribute).attribute_name]
@@ -1158,6 +1214,8 @@ class RelationalTreeReducer:
             case 'table_identifier', ('identifier', tablename, _) :
                 return NamedRelation(tablename)
 
+            case _, (_, 'eval', _), Parser.Node() as child :
+                return self.reduce(child)
             case _, ('char', '(', _), Parser.Node() as child, ('char', ')', _) :
                 return self.reduce(child)
             case _, Parser.Node() as child:
