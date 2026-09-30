@@ -368,11 +368,51 @@ class UnaryRelational(RelationExpression):
         raise NotImplementedError()
 
 def project(self:Project, r:Relation) -> Relation:
-    raise NotImplementedError()
-def select(self:Project, r:Relation) -> Relation:
-    raise NotImplementedError()
-def rename(self:Project, r:Relation) -> Relation:
-    raise NotImplementedError()
+
+    projected_indices = []
+    used_cols = []
+    for i, col in enumerate(r.cols) :
+        projected_col = next((x for x in self.columns if col in x or col.split('.')[-1] in x), None)
+        if projected_col :
+            projected_indices.append(i)
+            used_cols.append(projected_col)
+
+    missed_cols = [x for x in self.columns if x not in used_cols]
+
+    if len(missed_cols) > 0 :
+        raise ValueError(f"Projection failed, some colmmns not found: {', '.join(missed_cols)}")
+
+    return Relation(
+        cols=[r.cols[i] for i in projected_indices],
+        data=[
+            [d[i] for i in projected_indices]
+            for d in r.data
+        ]
+    )
+
+def select(self:Select, r:Relation) -> Relation:
+    return Relation(
+        cols=r.cols,
+        data=[
+            d.data
+            for d in r.bound_tuples()
+            if self.predicate.eval([d], {})
+        ]
+    )
+
+def rename(self:Rename, r:Relation) -> Relation:
+    def rename_col(col:str):
+        if col in self.renames : return self.renames[col]
+        
+        split = col.split('.')
+        if len(split) == 2 and split[1] in self.renames : return f'{split[0]}.{self.renames[split[1]]}'
+        return col
+    
+    return Relation(
+        cols = [rename_col(col) for col in r.cols],
+        data = r.data
+    )
+    
 def compute(self:Compute, r:Relation) -> Relation:
     return Relation(
         cols = r.cols + [c[1] for c in self.computes],

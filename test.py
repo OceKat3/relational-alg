@@ -429,6 +429,75 @@ def test_relation_compute():
         ['R.a', 'R.b', 'c'], result.cols
     )
 
+def test_relation_project():
+    document = "project[a](R)"
+
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    r = Relation(
+        cols=['a', 'b'],
+        data=[[1, 2]]
+    )
+
+    result = ast.eval(
+            [], {"R": r}
+        )
+    
+    assert_equal(
+        [[1]], result.data
+    )
+    assert_equal(
+        ['R.a'], result.cols
+    )
+
+def test_relation_select():
+    document = "select[a>2](R)"
+
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    r = Relation(
+        cols=['a', 'b'],
+        data=[[1, 2], [2,3], [3,4]]
+    )
+
+    result = ast.eval(
+            [], {"R": r}
+        )
+    
+    assert_equal(
+        [[3,4]], result.data
+    )
+    assert_equal(
+        ['R.a','R.b'], result.cols
+    )
+
+def test_relation_rename():
+    document = "rename[a->x, b->y](R)"
+
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    r = Relation(
+        cols=['a', 'b'],
+        data=[[1, 2]]
+    )
+
+    result = ast.eval(
+            [], {"R": r}
+        )
+    
+    assert_equal(
+        [[1,2]], result.data
+    )
+    assert_equal(
+        ['R.x','R.y'], result.cols
+    )
+
 all_tests = [(key, value) for key, value in locals().items() if key.startswith('test')]
 
 for name, t in all_tests :
@@ -438,3 +507,4 @@ for name, t in all_tests :
     except BaseException as e:
         print(f'(!) test failed: {name}')
         print(type(e), e)
+        raise e
