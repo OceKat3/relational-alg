@@ -498,6 +498,261 @@ def test_relation_rename():
         ['R.x','R.y'], result.cols
     )
 
+def test_relation_union():
+    document = "A union B"
+
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    a = Relation(
+        cols=['a', 'b'],
+        data=[[1, 2], [1,3]]
+    )
+    b = Relation(
+        cols=['a', 'b'],
+        data=[[1, 2], [1,6]]
+    )
+
+    result = ast.eval(
+        [], {"A": a, "B": b}
+    )
+    
+    assert_equal(
+        [[1,2], [1,3], [1,2], [1,6]], result.data
+    )
+    assert_equal(
+        ['a','b'], result.cols
+    )
+
+def test_semantic_18():
+    document = "select[a=b](R)"
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    r = Relation(
+        cols=['a', 'b'],
+        data=[[1, 2], [3,3]]
+    )
+
+    result = ast.eval(
+            [], {"R": r}
+        )
+    
+    assert_equal(
+        [[3,3]], result.data
+    )
+    assert_equal(
+        ['R.a','R.b'], result.cols
+    )
+
+def test_semantic_19():
+    document = "employees join[employees.departmentid=departments.id] departments"
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    employees = Relation(
+        cols=['id', 'departmentid'],
+        data=[[1, 2], [3,3]]
+    )
+    departments = Relation(
+        cols=['id'],
+        data=[[3]]
+    )
+
+    result = ast.eval(
+        [], {"employees": employees, "departments": departments}
+    )
+    
+    assert_equal(
+        [[3,3,3]], result.data
+    )
+    assert_equal(
+        ['employees.id', 'employees.departmentid', 'departments.id'], result.cols
+    )
+
+def test_natural_join():
+    document = "employees join departments"
+    
+    ast = parse_to_ast(document)
+
+    from parser import GenericJoin, Relation
+
+    employees = Relation(
+        cols=['id', 'departmentid'],
+        data=[[1, 2], [5,3]]
+    )
+    departments = Relation(
+        cols=['id', 'name'],
+        data=[[5, 'department']]
+    )
+
+    assert isinstance(ast, GenericJoin)
+
+    result = ast.eval(
+        [], {"employees": employees, "departments": departments}
+    )
+    
+    assert_equal(
+        [[5,3,'department']], result.data
+    )
+    assert_equal(
+        ['id', 'departmentid', 'name'], result.cols
+    )
+
+
+# "Explain in your README why this query is unanswerable without rename"
+# actually this query is totally answerable. use left and right
+def test_semantic_20():
+    document = "employees left join[left.managerid=right.id] employees"
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    employees = Relation(
+        cols=['id', 'managerid'],
+        data=[[1, 3], [2,3], [3,0]]
+    )
+
+    result = ast.eval(
+        [], {"employees": employees}
+    )
+    
+    assert_equal(
+        [[1,3,3,0], [2,3,3,0], [3,0,None,None]], result.data
+    )
+    assert_equal(
+        ['left.id', 'left.managerid', 'right.id', 'right.managerid'], result.cols
+    )
+
+def test_semantic_21():
+
+    document = "R union S"
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    R = Relation(
+        cols=['a', 'b'],
+        data=[[1, 3], [2,3], [3,0]]
+    )
+    S = Relation(
+        cols=['a', 'c'],
+        data=[[1,7]]
+    )
+
+    try :
+        result = ast.eval(
+            [], {"R": R, "S":S}
+        )
+    except TypeError :
+        pass
+    else:
+        raise AssertionError('bad union should raise an error')
+
+def test_semantic_22():
+
+    document = 'select[age<"30"](people)'
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    people = Relation(
+        cols=['age'],
+        data=[[20], [30], [40]]
+    )
+
+    try :
+        result = ast.eval(
+            [], {"people": people}
+        )
+    except TypeError :
+        pass
+    else:
+        raise AssertionError('bad union should raise an error')
+
+# my system explicitly does not remove duplicates to make it closer to SQL, for later in the project
+def test_semantic_23():
+
+    document = 'project[age](people)'
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    people = Relation(
+        cols=['age', 'name'],
+        data=[[20, 'a'], [30, 'b'], [40, 'c'], [30, 'd']]
+    )
+
+    result = ast.eval(
+        [], {"people": people}
+    )
+
+    assert_equal(
+        [[20], [30], [40], [30]],
+        result.data
+    )
+
+# duplicates have no effect
+def test_semantic_24():
+
+    document = 'project[age age](people)'
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    people = Relation(
+        cols=['age', 'name'],
+        data=[[20, 'a'], [30, 'b'], [40, 'c'], [30, 'd']]
+    )
+
+    result = ast.eval(
+        [], {"people": people}
+    )
+
+    assert_equal(
+        [[20], [30], [40], [30]],
+        result.data
+    )
+    assert_equal(
+        ['people.age'],
+        result.cols
+    )
+
+def test_semantic_24():
+
+    document = 'select[false](people)'
+    
+    ast = parse_to_ast(document)
+
+    from parser import BoundTuple, Relation
+
+    people = Relation(
+        cols=['age', 'name'],
+        data=[[20, 'a'], [30, 'b'], [40, 'c'], [30, 'd']]
+    )
+
+    result = ast.eval(
+        [], {"people": people}
+    )
+
+    assert result is not None
+
+    assert_equal(
+        ['people.age', 'people.name'],
+        result.cols
+    )
+
+
 all_tests = [(key, value) for key, value in locals().items() if key.startswith('test')]
 
 for name, t in all_tests :

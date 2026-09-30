@@ -50,7 +50,7 @@ arithmetic_grammar = {
     "factor": [[number], [special_char("("), "sum", special_char(")")]],
 }
 
-relational_algebra_grammar = {
+relational_algebra_grammar:grammartype = {
     START_SYMBOL: [["input"]],
     "input": [
         ["statement"], 
@@ -240,13 +240,15 @@ class Relation:
         for tup in self.data :
             yield BoundTuple(tup, self) # TODO performance: malloc will slow things down here
 
+
 @dataclass
 class BoundTuple:
     data: list[str | int | float]
     table: Relation
-
+    
 class AlgebraNode:
     allowed_types:list[type] = [object]
+    counter:int = 0
 
     def is_allowed_type(self, arg:Any) -> bool:
         return any(isinstance(arg, T) for T in self.allowed_types)
@@ -277,15 +279,15 @@ def match_attribute_name_to_tuples(attribute_name:str, bound_tuples:list[BoundTu
 
     if len(bound_tuples) == 2 :
         if attribute_name.startswith('left.') :
-            return match_attribute_name_to_tuples(attribute_name.split('.')[-1], [bound_tuples[0]])
+            return [(0, j) for _, j in match_attribute_name_to_tuples(attribute_name.split('.')[-1], [bound_tuples[0]])]
         if attribute_name.startswith('right.') :
-            return match_attribute_name_to_tuples(attribute_name.split('.')[-1], [bound_tuples[1]])
+            return [(1, j) for _, j in match_attribute_name_to_tuples(attribute_name.split('.')[-1], [bound_tuples[1]])]
 
-    return list(
-        chain(
-            *[map(lambda j : (i,j), match_one_tuple(t)) for i, t in enumerate(bound_tuples)]
-        )
-    )
+    def iter_matches():
+        for i, t in enumerate(bound_tuples) :
+            yield from map(lambda j : (i,j), match_one_tuple(t))
+
+    return list(iter_matches())
 
 @dataclass
 class NamedAttribute(ScalarExpression):
@@ -308,7 +310,7 @@ class NamedAttribute(ScalarExpression):
     def eval(self, bound_tuples:list[BoundTuple], *a, **kwa):
 
         if len(bound_tuples) == 0 :
-            raise ValueError(f'gerbert used in empty context: {self.attribute_name}')
+            raise NameError(f'gerbert used in empty context: {self.attribute_name}')
 
         try :
             return self.use_cache(bound_tuples)
@@ -317,15 +319,16 @@ class NamedAttribute(ScalarExpression):
 
         possible_matches = match_attribute_name_to_tuples(self.attribute_name, bound_tuples)
         if len(possible_matches) == 0 :
-            raise ValueError(f'Could not find attribute {self.attribute_name}')
+            raise NameError(f'Could not find attribute {self.attribute_name}')
         if len(possible_matches) > 1 :
             if len(bound_tuples) == 2 :
-                raise ValueError(f'{self.attribute_name} is ambiguous in this context. Use the left. and right. prefixes to disambiguate')
+                raise NameError(f'{self.attribute_name} is ambiguous in this context. Use the left. and right. prefixes to disambiguate')
             else :
-                raise ValueError(f'{self.attribute_name} is ambiguous in this context')
+                raise NameError(f'{self.attribute_name} is ambiguous in this context')
 
         self._index_cache = possible_matches[0]
         i, j = possible_matches[0]
+
         return bound_tuples[i].data[j]
 
 @dataclass
@@ -343,7 +346,7 @@ class NamedRelation(RelationExpression):
                 data=relation.data
             )
         except KeyError :
-            raise ValueError(f'Not a known relation: {self.relation_name}')
+            raise NameError(f'Not a known relation: {self.relation_name}')
 
 @dataclass
 class ScalarLiteral(ScalarExpression):
@@ -380,7 +383,7 @@ def project(self:Project, r:Relation) -> Relation:
     missed_cols = [x for x in self.columns if x not in used_cols]
 
     if len(missed_cols) > 0 :
-        raise ValueError(f"Projection failed, some colmmns not found: {', '.join(missed_cols)}")
+        raise NameError(f"Projection failed, some colmmns not found: {', '.join(missed_cols)}")
 
     return Relation(
         cols=[r.cols[i] for i in projected_indices],
@@ -455,23 +458,245 @@ class BinaryRelationalExpression(RelationExpression):
             self.right.eval(*a, **kwa)
         )
 
-def union(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplementedError()
+def strip_table_prefixes(relation:Relation) -> Relation :
+    stripped = Relation(
+        cols = [col.split('.')[-1] for col in relation.cols],
+        data = relation.data
+    )
+    if len(set(stripped.cols)) < len(stripped.cols) :
+        raise TypeError(f'Schema ambiguity after removing relation prefixes: {', '.join(relation.cols)}')
+    return stripped
 
+def check_shared_columns(r1:Relation, r2:Relation):
+    colset1 = set(r1.cols)
+    colset2 = set(r2.cols)
+
+    if colset1 != colset2 :
+        raise TypeError(f'Cannot perform union: schemas do not match. left: {colset1.difference(colset1)}, right: {colset2.difference(colset1)}')
+
+def union(self, r1:Relation, r2:Relation) -> Relation:
+
+    r1 = strip_table_prefixes(r1)
+    r2 = strip_table_prefixes(r2)
+
+    check_shared_columns(r1, r2)
+
+    return Relation(
+        cols=r1.cols,
+        data=r1.data + [
+            [t[r2._column_lookup[r1col]] for r1col in r1.cols]
+            for t in r2.data
+        ]
+    )
+    
 def intersection(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplementedError()
+
+    r1 = strip_table_prefixes(r1)
+    r2 = strip_table_prefixes(r2)
+
+    check_shared_columns(r1, r2)
+
+    return Relation(
+        cols=r1.cols,
+        data=[
+            t
+            for t in (
+                [t[r2._column_lookup[r1col]] for r1col in r1.cols]
+                for t in r2.data
+            )
+            if t in r1.data
+        ]
+    )
 
 def subtract(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplementedError()
+
+    r1 = strip_table_prefixes(r1)
+    r2 = strip_table_prefixes(r2)
+
+    check_shared_columns(r1, r2)
+    
+    return Relation(
+        cols=r1.cols,
+        data=[
+            t
+            for t in (
+                [t[r1._column_lookup[r2col]] for r2col in r2.cols]
+                for t in r1.data
+            )
+            if t not in r2.data
+        ]
+    )
 
 def divide(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplementedError()
+
+    r1 = strip_table_prefixes(r1)
+    r2 = strip_table_prefixes(r2)
+
+    if not set(r2.cols).issubset(set(r1.cols)) :
+        raise TypeError('Relation division failed: right side schema must be a subset of left side schema')
+
+    cols_not_in_r2 = list(set(r1.cols).difference(set(r2.cols)))
+
+    equivalence_classes:dict[tuple, set] = dict()
+
+    for t in r1.data :
+        equivalence_key = tuple(t[r1._column_lookup[c]] for c in cols_not_in_r2)
+        residual = tuple(t[r1._column_lookup[c]] for c in r2.cols)
+
+        if equivalence_key not in equivalence_classes :
+            equivalence_classes[equivalence_key]= set()
+        
+        equivalence_classes[equivalence_key].add(residual)
+
+    valid_equivalence_classes = [
+        list(eq)
+        for eq, residuals in equivalence_classes.items()
+        if residuals == set(r2.data)
+    ]
+
+    return Relation(
+        cols = cols_not_in_r2,
+        data=valid_equivalence_classes
+    )
+
+def disambiguate_columns_for_join(r1:Relation, r2:Relation) -> tuple[Relation, Relation] :
+
+    shared_columns = set(r1.cols).intersection(set(r2.cols))
+
+    new_r1_cols = [*r1.cols]
+    new_r2_cols = [*r2.cols]
+
+    for s in shared_columns :
+        i = r1._column_lookup[s]
+        new_r1_cols[i] = f"left.{new_r1_cols[i].split('.')[-1]}"
+        i = r2._column_lookup[s]
+        new_r2_cols[i] = f"right.{new_r2_cols[i].split('.')[-1]}"
+
+    return (
+        Relation(
+            cols=new_r1_cols,
+            data=r1.data
+        ),
+        Relation(
+            cols=new_r2_cols,
+            data=r2.data
+        )
+    )
 
 def join(self:GenericJoin, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplementedError()
+
+    _, joiner, jointype = self.jointype
+
+    if joiner != 'natural' :
+        r1, r2 = disambiguate_columns_for_join(r1, r2)
+    elif joiner == 'natural' :
+        r1 = strip_table_prefixes(r1)
+        r2 = strip_table_prefixes(r2)
+
+    _join_condition: Callable[[BoundTuple, BoundTuple], bool] = lambda a, b : NotImplemented
+
+    shared_columns = set(r1.cols).intersection(set(r2.cols))
+    if joiner == 'natural' :
+        _join_condition = lambda t1, t2 : all(
+            t1.data[t1.table._column_lookup[col]]
+            == t2.data[t2.table._column_lookup[col]]
+            for col in shared_columns       
+        )
+    else :
+        _join_condition = lambda t1, t2 : joiner.eval([t1,t2], {})
+
+    def wrapper(*a):
+        self.counter += 1
+        return _join_condition(*a)
+    join_condition = wrapper
+    
+    def get_fully_joined_relation():
+        if jointype == 'inner' :
+            return Relation(
+                cols = r1.cols + r2.cols,
+                data = [
+                    t1.data + t2.data
+                    for t1 in r1.bound_tuples()
+                    for t2 in r2.bound_tuples()
+                    if join_condition(t1, t2)
+                ]
+            )
+        if jointype == 'left' :
+            data = []
+            for t1 in r1.bound_tuples() :
+                any_matches = False
+                for t2 in r2.bound_tuples() :
+                    if not join_condition(t1, t2) : continue
+                    any_matches = True
+                    data.append(t1.data + t2.data)
+                if not any_matches :
+                    data.append(t1.data + ([None] * len(r2.cols)))
+            return Relation(
+                cols = r1.cols + r2.cols,
+                data = data
+            )
+        if jointype == 'outer' :
+            #maybe there is a symmetric algorithm for computing outer joins? i don't know it
+
+            data = []
+            r2_matches = [False] * len(r2.data)
+
+            for t1 in r1.bound_tuples() :
+                any_matches = False
+                for i, t2 in enumerate(r2.bound_tuples()) :
+                    if not join_condition(t1, t2) : continue
+                    any_matches = True
+                    r2_matches[i] = True
+                    data.append(t1.data + t2.data)
+                if not any_matches :
+                    data.append(t1.data + ([None] * len(r2.cols)))
+
+            for i, r2_match in enumerate(r2_matches) :
+                if not r2_match :
+                    data.append(([None] * len(r2.cols)) + r2.data[i])
+            
+            return Relation(
+                cols = r1.cols + r2.cols,
+                data = data
+            )
+        raise SyntaxError(f'invalid join type: "{jointype}"')
+
+    r = get_fully_joined_relation()
+
+    def remove_duplicate_columns(relation:Relation) -> Relation :
+        nonduplicate_indices = []
+        seen_set = set()
+        for i, col in enumerate(relation.cols) :
+            if col in seen_set : continue
+            seen_set.add(col)
+            nonduplicate_indices.append(i)
+        return Relation(
+            cols=[relation.cols[i] for i in nonduplicate_indices],
+            data = [
+                [t[i] for i in nonduplicate_indices]
+                for t in relation.data
+            ]
+        )
+
+    if joiner == 'natural' :
+        return remove_duplicate_columns(r)
+    return r
 
 def cartesian_product(self, r1:Relation, r2:Relation) -> Relation:
-    raise NotImplementedError()
+
+    if not set(r1.cols).isdisjoint(set(r2.cols)) :
+        raise TypeError(f'Cartesian product must be performed on disjoint schemas. Shared columns: {set(r1.cols).intersection(set(r2.cols))}')
+
+    return Relation(
+        cols = r1.cols + r2.cols,
+        data = [
+            t1 + t2
+            for t2 in r2.data
+            for t1 in r1.data
+        ]
+    )
+
+    
 
 class Union(BinaryRelationalExpression):
     operation = union
@@ -550,8 +775,10 @@ class BinaryCondition(BooleanExpression):
     def operation(self, x, y) -> bool: raise NotImplementedError()
 
     def eval(self, *a, **kwa) -> bool:
+        left = self.left.eval(*a, **kwa)
+        right = self.right.eval(*a, **kwa)
         return self.operation(
-            self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
+            left, right 
         )
 
 class Eq(BinaryCondition):
@@ -878,7 +1105,7 @@ class Recognizer:
         items_waiting_for_terminal = diagnose_recursively(
             find_partially_completed_items(0, START_SYMBOL)[0]
         )
-
+        
         farthest_parse_distance = max(items_waiting_for_terminal, key=lambda c : c.end).end
         farthest_parsed_items = [x for x in items_waiting_for_terminal if x.end == farthest_parse_distance and x.end > 0]
 
@@ -1014,6 +1241,15 @@ class Parser:
             return (self.symbol, [
                 child if isinstance(child, tuple) else child.to_printable_graph() for child in self.children
             ])
+
+        def prettyprint(self, indentation_level:int=0):
+            SPACE = '  '
+            print(SPACE * indentation_level + self.item.goal)
+            for child in self.children :
+                if isinstance(child, Parser.Node) :
+                    child.prettyprint(indentation_level+1)
+                else :
+                    print(SPACE * (indentation_level+1) + str(child))
 
     @staticmethod
     def invert_items(items: list[list[ParsingItem]], unsafe=False) -> list[list[InvertedItem]]:
@@ -1242,9 +1478,9 @@ class RelationalTreeReducer:
                 return Not(self.reduce(operand))
 
             case 'boolean_literal', ('identifier', 'false', _) :
-                return False
+                return ScalarLiteral(False)
             case 'boolean_literal', ('identifier', 'true', _) :
-                return True
+                return ScalarLiteral(True)
 
             case 'attribute', ('identifier', left, _), _, ('identifier', right, _):
                 return NamedAttribute(f"{left}.{right}")
