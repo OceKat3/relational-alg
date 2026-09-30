@@ -11,6 +11,8 @@ https://youtube.com/live/XSSKemw3FOI
 https://youtube.com/live/DxOTx-qbn3c
 https://youtube.com/live/7kun8c49514 (i am writing the design log in this stream, hello hi hello :3 )
 
+^ at like 2:08:00 you can see the moment i discovered a very stupid bug
+
 I originally wanted to write this project in the functional language idris2, because I thought a dependent type system would help. It was very stupid to think i could learn a functional programming language AND dependent type theory AND write a parser in two weeks. So instead i'm using my most comfortable language, python.
 
 It was also clear from the beginning that this project would use zero AI. It's an extra challenge I imposed on myself, and I'm very glad I did. This project has been possibly the most fun I've ever had this year in computer science, thank you Prof. Orogat!!
@@ -52,3 +54,7 @@ I wasn't happy with just making a parse tree; I wanted to turn the parse tree in
 
 The conversion from parse tree to AST happens in RelationalTreeReducer.reduce, which is just a huge recursive pattern-matcher. Python tuples and dataclasses came in to save my life here, because they work so well with python's pattern matcher. If there are any bugs in my code, i suspect they're here because it's mostly untyped, and every rule from the grammar needs to get caught by this match statement.
 
+
+- I got really frustrated with trying to do python imports across directories (test files in /test need to import parser) so I just created a test.py file in the same directory. The solution involves making a pyproject.toml which is too much work
+
+- Battled a nasty error in the grammar again. I was doing "not" and unary negation incorrectly. I incorporated subtraction into the "multiplicative" nonterminal, when really subtraction deserves to be its own nonterminal

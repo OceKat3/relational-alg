@@ -80,7 +80,7 @@ relational_algebra_grammar = {
     ],
 
     "unary_relational_expression": [
-        [literal_identifier("select"), special_char('['), "condition", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
+        [literal_identifier("select"), special_char('['), "boolean_expression", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
         [literal_identifier("project"), special_char('['), "identifier_list", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
         [literal_identifier("rename"), special_char('['), "rename_list", special_char(']'), special_char('('), "relation_expression", special_char(')')],
         [literal_identifier("compute"), special_char('['), "compute_list", special_char(']'), special_char('('), "relation_expression", special_char(')')],
@@ -90,6 +90,7 @@ relational_algebra_grammar = {
         [literal_identifier("intersect")], 
         ["cartesian_product"],
         [literal_identifier("subtract")],
+        [literal_identifier("minus")],
         [literal_identifier("divide")],
         ["join"],
         
@@ -109,28 +110,31 @@ relational_algebra_grammar = {
         [literal_identifier('left'), literal_identifier('join')],
     ],
     "theta_join":[
-        ["natural_join", literal('['), "condition", literal(']')]
+        ["natural_join", literal('['), "boolean_expression", literal(']')]
     ],
 
     "boolean_expression": [
         ["disjunct"]
     ],
     "disjunct":[
-        ["conjunct", special_char('or'), "disjunct"],
+        ["conjunct", literal_identifier('or'), "disjunct"],
         ["conjunct"]
     ],
     "conjunct":[
-        ["boolean_factor", special_char('and'), "conjunct"],
-        ["boolean_factor"]
+        ["not", literal_identifier('and'), "conjunct"],
+        ["not"]
+    ],
+    "not": [
+        ["boolean_factor"],
+        [literal_identifier('not'), "boolean_factor",]
     ],
     "boolean_factor": [
         [special_char('('), "boolean_expression", special_char(')')],
-        [special_char('not'), "boolean_expression"],
         ["condition"],
     ],
 
     "condition":[
-        ["scalar_expression"],
+        ["boolean_literal"],
         ["scalar_expression", special_char('<>'), "scalar_expression"],
         ["scalar_expression", special_char('='), "scalar_expression"],
         ["scalar_expression", special_char('<>'), special_char('='), "scalar_expression"],
@@ -138,19 +142,13 @@ relational_algebra_grammar = {
     ],
 
     "boolean_literal": [
-        [literal("true")],
-        [literal("false")],
-        ["attribute"]
+        [literal_identifier("true")],
+        [literal_identifier("false")]
     ],
 
     "scalar_expression": [
         ["numeric_expression"],
-        ["string_expression"]
-    ],
-
-    "string_expression": [
         [string_literal],
-        ["attribute"]
     ],
 
     "numeric_expression": [
@@ -160,14 +158,17 @@ relational_algebra_grammar = {
     "additive": [
         ["multiplicative", special_char('+-'), "additive"],
         ["multiplicative"],
-        [special_char('-'), "factor"],
     ],
     "multiplicative": [
-        ["factor", special_char('*/'), "multiplicative"],
-        ["factor"]
+        ["unm", special_char('*/'), "multiplicative"],
+        ["unm"],
+    ],
+    "unm": [
+        ["factor"],
+        [special_char('-'), "factor"],
     ],
     "factor": [
-        [special_char('('), "numeric_expression", special_char(')')],
+        [special_char('('), "additive", special_char(')')],
         ["number"],
         ["attribute"],
     ],
@@ -456,7 +457,7 @@ class Unm(ScalarExpression):
         return -self.arg.eval(*a, **kwa)
 
 @dataclass
-class BinaryBooleanExpression(BooleanExpression):
+class BinaryCondition(BooleanExpression):
     left: ScalarExpression
     right: ScalarExpression
 
@@ -467,12 +468,37 @@ class BinaryBooleanExpression(BooleanExpression):
             self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
         )
 
-class Eq(BinaryBooleanExpression):
+class Eq(BinaryCondition):
     operation = lambda self, x, y : x == y
-class Less(BinaryBooleanExpression):
+class Less(BinaryCondition):
     operation = lambda self, x, y : x < y
-class Leq(BinaryBooleanExpression):
+class Leq(BinaryCondition):
     operation = lambda self, x, y : x <= y
+
+@dataclass
+class BinaryBooleanExpression(BooleanExpression):
+    left: BooleanExpression
+    right: BooleanExpression
+
+    def operation(self, x, y) -> bool: raise NotImplemented
+
+    def eval(self, *a, **kwa) -> bool:
+        return self.operation(
+            self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
+        )
+
+class And(BinaryBooleanExpression):
+    operation = lambda self, x, y : x and y
+class Or(BinaryBooleanExpression):
+    operation = lambda self, x, y : x or y
+
+@dataclass
+class Not(BooleanExpression):
+    operand: BooleanExpression
+
+    def eval(self, *a, **kwa) -> bool:
+        return not self.operand.eval(*a, **kwa)
+
 
 def check_grammar(grammar:grammartype):
 
@@ -534,6 +560,7 @@ def tokenizer(document: str) -> Generator[Token]:
 
         if STRING_END(next_char) :
             yield ('string_literal', current_token, document_index)
+            current_state = document_begin
         elif STRING_ESCAPE(next_char) :
             current_state = escaped_string
         else :
@@ -556,7 +583,7 @@ def tokenizer(document: str) -> Generator[Token]:
         if NUMBER(next_char) :
             current_token += next_char
         else :
-            yield ('number', int(current_token), document_index)
+            yield ('number', int(current_token), document_index-1)
             current_state = document_begin
             yield from document_begin(next_char)
         yield from []
@@ -642,7 +669,10 @@ class Recognizer:
 
     def item_already_exists(self, i, new_item:ParsingItem):
         return any(
-            other.rule == new_item.rule and other.progress == new_item.progress and other.start == new_item.start and other.goal == new_item.goal
+            other.rule == new_item.rule and 
+            other.progress == new_item.progress and 
+            other.start == new_item.start and 
+            other.goal == new_item.goal
             for other in self.state_sets[i]
         )
 
@@ -824,8 +854,10 @@ class Recognizer:
         )
 
         if not was_parse_successful :
+            # print(
+            #     self.repr_state_sets(self.state_sets)
+            # )
             self.diagnose_problem()
-            quit()
 
         def remove_all_incomplete_items():
 
@@ -873,11 +905,13 @@ class Parser:
 
     inverted_items: list[list[InvertedItem]]
     document: list[Token]
-    seen_set:list[InvertedItem] = list()
+    seen_set:list[InvertedItem]
 
     def __init__(self, items: list[list[ParsingItem]], document: list[Token]):
         self.inverted_items = Parser.invert_items(items)
         self.document = document
+
+        self.seen_set = list()
 
         # print(Recognizer.repr_state_sets(self.inverted_items))
 
@@ -894,8 +928,6 @@ class Parser:
             return (self.symbol, [
                 child if isinstance(child, tuple) else child.to_printable_graph() for child in self.children
             ])
-
-        
 
     @staticmethod
     def invert_items(items: list[list[ParsingItem]], unsafe=False) -> list[list[InvertedItem]]:
@@ -919,14 +951,20 @@ class Parser:
     def create_tree(self, i=0, symbol=START_SYMBOL, end=-1, recursive_depth:int = 0) -> Node :
         if end == -1 : end = len(self.document)
 
-        print('    ' * recursive_depth, end=" ")
+        # print(
+        #     Recognizer.repr_state_sets(self.inverted_items)
+        # )
+
+        # print('    ' * recursive_depth, end=" ")
+        # print(i, symbol, end)
         item = self.get_max_length_item(i, symbol, end)
-        print(str(item))
+        # print(str(item))
         self.seen_set.append(item)
 
         # print(f"={i}= {item.__str__()}")
 
         if symbol == START_SYMBOL and item.end != len(self.document) :
+            print(i, symbol, item)
             raise SyntaxError(f'Failed to fully parse input')
 
         children:list[Parser.Node | Token] = []
@@ -993,7 +1031,7 @@ class RelationalTreeReducer:
                         return Union(self.reduce(left), self.reduce(right))
                     case "intersect":
                         return Intersection(self.reduce(left), self.reduce(right))
-                    case "subtract":
+                    case "subtract" | "minus":
                         return RelationSubtract(self.reduce(left), self.reduce(right))
                     case "divide":
                         return RelationDivide(self.reduce(left), self.reduce(right))
@@ -1004,13 +1042,13 @@ class RelationalTreeReducer:
                     case 'cartesian_product' :
                         return CartesianProduct(self.reduce(left), self.reduce(right))
             
-            case 'inner_relation_expression', Parser.Node() as left, Parser.Node(children=[('identifier', str() as operator, _)]), Parser.Node() as right :
+            case 'inner_relation_expression', _, Parser.Node() as left, Parser.Node(children=[('identifier', str() as operator, _)]), Parser.Node() as right, _ :
                 match operator :
                     case "union":
                         return Union(self.reduce(left), self.reduce(right))
                     case "intersect":
                         return Intersection(self.reduce(left), self.reduce(right))
-                    case "subtract":
+                    case "subtract" | "minus":
                         return RelationSubtract(self.reduce(left), self.reduce(right))
                     case "divide":
                         return RelationDivide(self.reduce(left), self.reduce(right))
@@ -1078,11 +1116,13 @@ class RelationalTreeReducer:
                 return Multiply( self.reduce(left), self.reduce(right) )
             case 'multiplicative', Parser.Node() as left, ('char', '/', _), Parser.Node() as right :
                 return Divide( self.reduce(left), self.reduce(right) )
+            case 'unm', (_, '-', _), Parser.Node() as operand :
+                return Unm(self.reduce(operand))
 
             case 'additive', ('char', '-', _), Parser.Node() as operand :
                 return Unm(self.reduce(operand))
 
-            case "string_expression", ('string_literal', s, _) :
+            case _, ('string_literal', s, _) :
                 return ScalarLiteral(s)        
 
             case 'condition', Parser.Node() as left, ('char', '=', _), Parser.Node() as right :
@@ -1097,6 +1137,13 @@ class RelationalTreeReducer:
                 return Leq(self.reduce(left), self.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '>', _), ('char', '=', _), Parser.Node() as right :
                 return Leq(self.reduce(right), self.reduce(left))
+
+            case 'disjunct', Parser.Node() as left, (_, 'or', _), Parser.Node() as right :
+                return Or(self.reduce(left), self.reduce(right))
+            case 'conjunct', Parser.Node() as left, (_, 'and', _), Parser.Node() as right :
+                return And(self.reduce(left), self.reduce(right))
+            case 'not', (_, 'not', _), Parser.Node() as operand :
+                return Not(self.reduce(operand))
 
             case 'boolean_literal', ('identifier', 'false', _) :
                 return False
