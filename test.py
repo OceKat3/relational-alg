@@ -1,4 +1,4 @@
-from parser import tokenizer
+from parser import tokenizer, parse_to_ast
 
 # tests from the assignment in brightspace
 
@@ -132,20 +132,6 @@ recognize = lambda document : Recognizer(
     document=list(tokenizer(document)),
     real_string_input=document,
 ).earley_recognize()
-
-def parse_to_ast(document):
-
-    tokens = list(tokenizer(document))
-
-    recognizer = Recognizer(document=tokens, real_string_input=document)
-    recognizer.earley_recognize()
-
-    parser = Parser(items = recognizer.state_sets, document=recognizer.document)
-    parse_tree = parser.create_tree()
-
-    ast = RelationalTreeReducer().ast(parse_tree)
-
-    return ast
 
 # i don't do associativity for binary relational operators because I think it's not obvious
 # these tests are still useful to make sure stuff works as expected

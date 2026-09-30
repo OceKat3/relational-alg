@@ -240,6 +240,19 @@ class Relation:
         for tup in self.data :
             yield BoundTuple(tup, self) # TODO performance: malloc will slow things down here
 
+    def prettyprint(self):
+
+        column_widths = [len(col) + 4 for col in self.cols]
+
+        def print_aligned(objs:list):
+            for o, w in zip(objs, column_widths):
+                print(str(o).ljust(w), end='')
+            print()
+
+        print_aligned(self.cols)
+        
+        for t in self.data :
+            print_aligned(t)
 
 @dataclass
 class BoundTuple:
@@ -345,7 +358,7 @@ class NamedRelation(RelationExpression):
                 ],
                 data=relation.data
             )
-        except KeyError :
+        except KeyError as e :
             raise NameError(f'Not a known relation: {self.relation_name}')
 
 @dataclass
@@ -777,6 +790,7 @@ class BinaryCondition(BooleanExpression):
     def eval(self, *a, **kwa) -> bool:
         left = self.left.eval(*a, **kwa)
         right = self.right.eval(*a, **kwa)
+        self.counter += 1
         return self.operation(
             left, right 
         )
@@ -1221,6 +1235,9 @@ class Parser:
     seen_set:list[InvertedItem]
 
     def __init__(self, items: list[list[ParsingItem]], document: list[Token]):
+        
+        assert len(items) > 0
+        
         self.inverted_items = Parser.invert_items(items)
         self.document = document
 
@@ -1262,7 +1279,7 @@ class Parser:
         return out
 
     def get_max_length_item(self, i:int, symbol:str, end:int) -> InvertedItem:
-        
+
         state_set = self.inverted_items[i]
         
         return max(
@@ -1501,54 +1518,18 @@ class RelationalTreeReducer:
                 assert not isinstance(token, Parser.Node)
              
 
-from pprint import pprint
-
-def document_to_parse_tree(document:str) -> Parser.Node:
+def parse_to_ast(document):
 
     tokens = list(tokenizer(document))
-
-    # pprint(tokens)
 
     recognizer = Recognizer(document=tokens, real_string_input=document)
     recognizer.earley_recognize()
 
-    # print(
-    #     recognizer.repr_state_sets(
-    #         # Parser.invert_items(
-    #             recognizer.state_sets
-    #         # )
-    #     )
-    # )
+    parser = Parser(items = recognizer.state_sets, document=recognizer.document)
+    parse_tree = parser.create_tree()
 
-    root = Parser(document=recognizer.document, items=recognizer.state_sets).create_tree()
+    ast = RelationalTreeReducer().ast(parse_tree)
 
-    actualroot = RelationalTreeReducer().reduce(root)
+    return ast
 
-    return actualroot
-
-
-
-root = document_to_parse_tree("relation1 union compute[col1+col2 as col3](relation2)")
-
-print()
-pprint(root)
-
-# pprint(
-#     root.to_printable_graph()
-# )
-
-
-# assert list(tokenizer(""" 
-# pprint(
-#     root.to_printable_graph()
-# )
-# """)) == [
-#     ('identifier', 'pprint'),
-#     ('char', '('),
-#     ('identifier', 'root'),
-#     ('char', '.'),
-#     ('identifier', 'to_printable_graph'),
-#     ('char', '('),
-#     ('char', ')'),
-#     ('char', ')')
-# ]
+# root = document_to_parse_tree("relation1 union compute[col1+col2 as col3](relation2)")

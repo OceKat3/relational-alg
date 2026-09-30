@@ -60,3 +60,4 @@ The conversion from parse tree to AST happens in RelationalTreeReducer.reduce, w
 - Battled a nasty error in the grammar again. I was doing "not" and unary negation incorrectly. I incorporated subtraction into the "multiplicative" nonterminal, when really subtraction deserves to be its own nonterminal
 
 - Made the decision that relations will all be nameless, and some attribute names will have dots in them. Calling attributes by name is flexible, so you don't always have to specify a relation name. Relations being nameless means there is no need to choose a name after e.g. unioning or joining
+
