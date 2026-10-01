@@ -714,7 +714,7 @@ def test_semantic_24():
         result.cols
     )
 
-def test_semantic_24():
+def test_semantic_25():
 
     document = 'select[false](people)'
     

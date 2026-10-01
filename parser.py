@@ -323,7 +323,7 @@ class NamedAttribute(ScalarExpression):
     def eval(self, bound_tuples:list[BoundTuple], *a, **kwa):
 
         if len(bound_tuples) == 0 :
-            raise NameError(f'gerbert used in empty context: {self.attribute_name}')
+            raise NameError(f'attribute used in empty context: {self.attribute_name}')
 
         try :
             return self.use_cache(bound_tuples)
@@ -477,22 +477,22 @@ def strip_table_prefixes(relation:Relation) -> Relation :
         data = relation.data
     )
     if len(set(stripped.cols)) < len(stripped.cols) :
-        raise TypeError(f'Schema ambiguity after removing relation prefixes: {', '.join(relation.cols)}')
+        raise NameError(f'Schema ambiguity after removing relation prefixes: {', '.join(relation.cols)}')
     return stripped
 
-def check_shared_columns(r1:Relation, r2:Relation):
+def check_shared_columns(r1:Relation, r2:Relation, verb:str):
     colset1 = set(r1.cols)
     colset2 = set(r2.cols)
 
     if colset1 != colset2 :
-        raise TypeError(f'Cannot perform union: schemas do not match. left: {colset1.difference(colset1)}, right: {colset2.difference(colset1)}')
+        raise TypeError(f'Cannot perform {verb}: schemas do not match. left: {colset1}, right: {colset2}')
 
 def union(self, r1:Relation, r2:Relation) -> Relation:
 
     r1 = strip_table_prefixes(r1)
     r2 = strip_table_prefixes(r2)
 
-    check_shared_columns(r1, r2)
+    check_shared_columns(r1, r2, 'union')
 
     return Relation(
         cols=r1.cols,
@@ -507,7 +507,7 @@ def intersection(self, r1:Relation, r2:Relation) -> Relation:
     r1 = strip_table_prefixes(r1)
     r2 = strip_table_prefixes(r2)
 
-    check_shared_columns(r1, r2)
+    check_shared_columns(r1, r2, 'intersection')
 
     return Relation(
         cols=r1.cols,
@@ -526,7 +526,7 @@ def subtract(self, r1:Relation, r2:Relation) -> Relation:
     r1 = strip_table_prefixes(r1)
     r2 = strip_table_prefixes(r2)
 
-    check_shared_columns(r1, r2)
+    check_shared_columns(r1, r2, 'subtraction')
     
     return Relation(
         cols=r1.cols,
@@ -1531,5 +1531,3 @@ def parse_to_ast(document):
     ast = RelationalTreeReducer().ast(parse_tree)
 
     return ast
-
-# root = document_to_parse_tree("relation1 union compute[col1+col2 as col3](relation2)")

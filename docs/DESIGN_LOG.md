@@ -11,8 +11,7 @@ https://youtube.com/live/XSSKemw3FOI
 https://youtube.com/live/DxOTx-qbn3c
 https://youtube.com/live/7kun8c49514 (i am writing the design log in this stream, hello hi hello :3 )
 https://youtube.com/live/4FRNECvEfLg
-
-^ at like 2:08:00 you can see the moment i discovered a very stupid bug
+https://youtube.com/live/hv1oUEc5Uls
 
 The only changes which are not streamed are the changes I make in class (e.g. this sentence right now)
 
@@ -55,7 +54,9 @@ Around this time, after fixing the ambiguity, I also came up with my algorithm f
 
 I wasn't happy with just making a parse tree; I wanted to turn the parse tree into an abstract syntax tree. For one, the parse tree has tons of redundant nodes. I'd also like to try continuing with this project to make a DBMS, so I think making a good AST now will save me some pain in the future. 
 
-The conversion from parse tree to AST happens in RelationalTreeReducer.reduce, which is just a huge recursive pattern-matcher. Python tuples and dataclasses came in to save my life here, because they work so well with python's pattern matcher. If there are any bugs in my code, i suspect they're here because it's mostly untyped, and every rule from the grammar needs to get caught by this match statement.
+The conversion from parse tree to AST happens in RelationalTreeReducer.reduce, which is just a huge recursive pattern-matcher. Python tuples and dataclasses came in to save my life here, because they work so well with python's pattern matcher. If there are any bugs in my code, i suspect they're here because it's mostly untyped, and every rule from the grammar needs to get caught by this match statement. This reducer is super tighly coupled in a non-obvious way to the grammar, so it introduces some friction to changing the grammar. The benefit reducing to a separate AST is that the AST is completely decoupled from the grammar! (well, obviously not, but the AST can survive significant grammar changes so long as the reducer gets updated)
+
+Most of my design decisions in parser.py are about controlling / offloading strongly coupled relationships between modules. For example, the grammar can change without really affecting the tokenizer, recognizer, parser, or AST. The choice to represent terminals as functions means that the recognizer and parser really don't care what tokens actually are. Tokens could be strings, tuples, some other datastructure. Weak coupling made this project a delight to work on, and I believe the code still has not turned into spahetti!
 
 
 - I got really frustrated with trying to do python imports across directories (test files in /test need to import parser) so I just created a test.py file in the same directory. The solution involves making a pyproject.toml which is too much work
@@ -64,4 +65,6 @@ The conversion from parse tree to AST happens in RelationalTreeReducer.reduce, w
 
 - Made the decision that relations will all be nameless, and some attribute names will have dots in them. Calling attributes by name is flexible, so you don't always have to specify a relation name. Relations being nameless means there is no need to choose a name after e.g. unioning or joining
 
-The REPL was the last thing I wrote. The only interesting thing to say about the repl is that it implements a special command 'mode' which lets you switch between types of output. 'parsetree' prints the results of the parser module, 'ast' prints the results of the reducer module, and 'query' will actually evaluate the query with the example relations. 
+- My tokenizer turns '>=' into two different tokens, and then the grammar has to actually specify that those tokens follow eachother. I prefer making the tokenizer simpler and grammar more complex. 
+
+The REPL was the last thing I wrote. The only interesting thing to say about the repl is that it implements a special command 'mode' which lets you switch between types of output. for example, 'parsetree' prints the results of the parser module, and 'ast' prints the results of the reducer module.

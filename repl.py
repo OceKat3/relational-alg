@@ -5,7 +5,7 @@ from typing import Literal
 
 from pprint import pprint
 
-mode:Literal['parsetree']|Literal['ast']|Literal['query'] = 'query'
+mode:Literal['parsetree']|Literal['ast']|Literal['query']|Literal['tokenize'] = 'query'
 
 while True :
     print()
@@ -16,10 +16,16 @@ while True :
         document = list(tokenizer(user_input))
         
         match document :
-            case [(_, 'mode', _), (_, ('parsetree' | 'ast' | 'query') as newmode, _)] :
+            case [(_, 'mode', _)]:
+                print('available modes: ', ', '.join(['parsetree', 'ast', 'query', 'tokenize']))
+                continue
+            case [(_, 'mode', _), (_, ('parsetree' | 'ast' | 'query' | 'tokenize') as newmode, _)] :
                 mode = newmode
                 continue
         
+        if mode == 'tokenize' :
+            pprint(document, width=50)
+            continue
         
         recognizer = Recognizer(
             document=document,

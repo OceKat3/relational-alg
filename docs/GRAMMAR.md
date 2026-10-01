@@ -151,6 +151,7 @@ additive
             3
 
 
+
 precedence and associativity:
 
 arithmetic operations in order of highest to lowest precedence:
@@ -165,8 +166,8 @@ not
 and
 or
 
-all binary arithmetic and boolean operators (+ - * / and or) are right associative. With the excep
+all binary arithmetic and boolean operators (+ - * / and or) are right associative, though this doesn't make a difference
 
-all other operators have no automatic precedence or associativity
-i.e. select/project... and union/join... take explicit parentheses
-I made this decision because I think there is no obvious order for these niche operations and any precedence would be confusing
+all other operators don't have precedence/associativity since they require you to use parentheses. e.g:
+
+"A union B minus C" is not a valid expression, the user would have to specify either "(A union B) minus C" or "A union (B minus C)". I made this decision because I don't personally see an obvious order in these operations, so any associativity rule would confuse me. 
