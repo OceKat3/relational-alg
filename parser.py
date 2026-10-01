@@ -1091,7 +1091,7 @@ class Recognizer:
             
             farthest_end = max(candidates, key=lambda c : c.end).end
             # print(goal, farthest_end)
-            return [item for item in candidates if item.end >= farthest_end/2 or True]
+            return [item for item in candidates]
             
             # print(candidates)
             # quit()
@@ -1127,7 +1127,7 @@ class Recognizer:
 
             problem_items = sorted(problem_items,key=lambda item : len(item.goal))
 
-            previous_token_document_pos = self.document[problem_items[0].end - 1][2]
+            previous_token_document_pos = self.document[max(problem_items[0].end - 1, 0)][2]
 
             preview_slice = slice(max(0,previous_token_document_pos-40), min(previous_token_document_pos+5, len(self.real_string_input)))
 
@@ -1148,7 +1148,10 @@ class Recognizer:
 
             return f"did you mean:\n{', or '.join(recommendations)} \nat '{document_neighbourhood}' ?" \
                  f"\n     {marker}"
-        
+
+        # TODO this is a bit of a hack
+        if len(farthest_parsed_items) == 0 :
+            raise SyntaxError('Failed to parse beginning of string')
 
         raise SyntaxError(get_error_message(farthest_parsed_items))
 

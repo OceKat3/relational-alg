@@ -1,5 +1,3 @@
-Talking points for recording the 5 minute demo
-
 - eval numeric expressions
 - query, ast, parse, tokenizer
 - making relational queries, joins, natural join, self join, theta join
