@@ -5,15 +5,22 @@ from typing import Literal
 
 from pprint import pprint
 
-mode:Literal['parsetree']|Literal['ast']|Literal['query'] = 'ast'
+mode:Literal['parsetree']|Literal['ast']|Literal['query'] = 'query'
 
 while True :
     print()
     user_input = input(f' {mode} > ')
-    print()
 
     try :
+
         document = list(tokenizer(user_input))
+        
+        match document :
+            case [(_, 'mode', _), (_, ('parsetree' | 'ast' | 'query') as newmode, _)] :
+                mode = newmode
+                continue
+        
+        
         recognizer = Recognizer(
             document=document,
             real_string_input=user_input
@@ -37,7 +44,7 @@ while True :
         if isinstance(result, Relation) :
             result.prettyprint()
         else :
-            print(result)
+            pprint(result)
 
     except (SyntaxError, TypeError, ValueError, NameError) as e :
         print(f"({e.__class__.__name__}) {str(e)}")

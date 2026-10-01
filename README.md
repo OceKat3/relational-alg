@@ -1,18 +1,34 @@
 # relational-alg
 
-A relational algebra query parser written for COMP3005 Database Management Systems at carleton. Relational algebra is an imperative language, i.e. when you write relational algebra you are describing what computations you want the database engine to do.
+A relational algebra query parser written for COMP3005 Database Management Systems at Carleton. Relational Algebra is a languaage, i.e. when you write relational algebra you are describing what computations you want the database engine to do. This project is my own interpretation of a relational algebra language, with a couple features I thought would be cool.
 
 This project was made with zero AI, and I streamed the whole development process on youtube. It was very fun!
-
-The tokenizer and earley parser were written in such a way that they can be used to parse any other language.
 
 ## how to use
 
 no dependencies other than the python standard lib!
 
+the main user interface is the repl:
 python repl.py
 
-if you'd like to see parse tree or AST representations, change the 'mode' variable in repl.py
+"eval" lets you run scalar expressions:
+eval 1 + 2 * 3
+
+"mode" changes the REPL mode. "query" is the default which tries to evaluate your input and produce a relation or scalar. "ast" prints the python objects representing the expression, and "parsetree" shows the result after recognizing and parsing (i.e. also before generating an ast) 
+mode query
+mode ast
+mode parsetree
+
+any statement that doesn't start with eval or mode is treated as a relational query. The project comes with some default relations in example_relations.py, which are loaded into the REPL. e.g:
+
+query > employees
+
+query > employees join[ left.managerid = right.id ] employees
+
+query > project [ departments.name ] (employees join[departmentid = departments.id] departments)
+
+
+
 
 ## features
 
@@ -39,3 +55,5 @@ addition works as string concatenation!
 - no deduplication mechanism
 - not thoroughly tested
 - extremely poor performance, because I just wanted to write very readable code. In python readable code tends to use lots of dynamic memory (sets, dataclasses)
+- no aggregation or groupby
+- no sorting

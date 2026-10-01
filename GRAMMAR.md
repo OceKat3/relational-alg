@@ -149,3 +149,24 @@ additive
             2
         additive
             3
+
+
+precedence and associativity:
+
+arithmetic operations in order of highest to lowest precedence:
+parentheses, literal numbers, or an attribute
+- (unary negation)
+*/  
++-  
+
+boolean operations in order of highest to lowest precedence
+parentheses, true/false, or an attribute
+not
+and
+or
+
+all binary arithmetic and boolean operators (+ - * / and or) are right associative. With the excep
+
+all other operators have no automatic precedence or associativity
+i.e. select/project... and union/join... take explicit parentheses
+I made this decision because I think there is no obvious order for these niche operations and any precedence would be confusing

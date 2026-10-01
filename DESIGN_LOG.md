@@ -14,6 +14,8 @@ https://youtube.com/live/4FRNECvEfLg
 
 ^ at like 2:08:00 you can see the moment i discovered a very stupid bug
 
+The only changes which are not streamed are the changes I make in class (e.g. this sentence right now)
+
 I originally wanted to write this project in the functional language idris2, because I thought a dependent type system would help. It was very stupid to think i could learn a functional programming language AND dependent type theory AND write a parser in two weeks. So instead i'm using my most comfortable language, python.
 
 It was also clear from the beginning that this project would use zero AI. It's an extra challenge I imposed on myself, and I'm very glad I did. This project has been possibly the most fun I've ever had this year in computer science, thank you Prof. Orogat!!
@@ -62,3 +64,4 @@ The conversion from parse tree to AST happens in RelationalTreeReducer.reduce, w
 
 - Made the decision that relations will all be nameless, and some attribute names will have dots in them. Calling attributes by name is flexible, so you don't always have to specify a relation name. Relations being nameless means there is no need to choose a name after e.g. unioning or joining
 
+The REPL was the last thing I wrote. The only interesting thing to say about the repl is that it implements a special command 'mode' which lets you switch between types of output. 'parsetree' prints the results of the parser module, 'ast' prints the results of the reducer module, and 'query' will actually evaluate the query with the example relations. 
