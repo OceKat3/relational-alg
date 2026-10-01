@@ -10,6 +10,7 @@ https://youtube.com/live/LTlXlkWcnGg
 https://youtube.com/live/XSSKemw3FOI
 https://youtube.com/live/DxOTx-qbn3c
 https://youtube.com/live/7kun8c49514 (i am writing the design log in this stream, hello hi hello :3 )
+https://youtube.com/live/4FRNECvEfLg
 
 ^ at like 2:08:00 you can see the moment i discovered a very stupid bug
 
