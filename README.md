@@ -11,6 +11,9 @@ no dependencies other than the python standard lib!
 the main user interface is the repl:
 python repl.py
 
+tests should all pass:
+python tests.py
+
 "eval" lets you run scalar expressions:
 query > eval 1 + 2 * 3
 
