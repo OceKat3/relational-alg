@@ -3,16 +3,8 @@
 {
 	"name": "Everything",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
-	"features": {
-		"ghcr.io/prulloac/devcontainer-features/lua:1": {},
-		"ghcr.io/devcontainers-extra/features/typescript:2": {
-			"version": "latest"
-		},
-		"ghcr.io/rails/devcontainer/features/ruby:2": {
-			"versionManager": "mise"
-		}
-	}
+	"image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie"
+	// "features": {}
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
