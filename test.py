@@ -1,4 +1,4 @@
-from parser import tokenizer, parse_to_ast
+from ra_parser import tokenizer, parse_to_ast
 
 # tests from the assignment in brightspace
 
@@ -126,7 +126,7 @@ def test_tokenizer_emptystring():
     assert any(x[:2] == ('string_literal', '') for x in tokens)
 
 
-from parser import Recognizer, Parser, RelationalTreeReducer
+from ra_parser import Recognizer, Parser, RelationalTreeReducer
 
 recognize = lambda document : Recognizer(
     document=list(tokenizer(document)),
@@ -138,7 +138,7 @@ recognize = lambda document : Recognizer(
 
 def test_grammar_10():
 
-    from parser import Union, RelationSubtract, NamedRelation
+    from ra_parser import Union, RelationSubtract, NamedRelation
 
     document1 = "(A union B) minus C"
 
@@ -157,7 +157,7 @@ def test_grammar_10():
 
 def test_grammar_11():
 
-    from parser import Union, RelationSubtract, NamedRelation
+    from ra_parser import Union, RelationSubtract, NamedRelation
     
     document1 = "A minus (B minus C)"
 
@@ -177,7 +177,7 @@ def test_grammar_11():
 
 def test_grammar_12():
 
-    from parser import Select, Not, And, Or, Less, Eq
+    from ra_parser import Select, Not, And, Or, Less, Eq
     
     document1 = "select[not (a=1 and b=2) or c>3](R)"
 
@@ -197,7 +197,7 @@ def test_grammar_12():
 # boolean operator precedence
 def test_grammar_13():
 
-    from parser import Select, Not, And, Or, Less, Eq
+    from ra_parser import Select, Not, And, Or, Less, Eq
     
     document1 = "select[a=1 and b<2 or c=3](R)"
 
@@ -216,7 +216,7 @@ def test_grammar_13():
 
 def test_grammar_14():
 
-    from parser import Project, Select, Eq, Less, ScalarLiteral, NamedRelation
+    from ra_parser import Project, Select, Eq, Less, ScalarLiteral, NamedRelation
     
     document1 = 'project[name](select[age>30](select[department="asd"](R)))'
 
@@ -238,7 +238,7 @@ def test_grammar_14():
 
 def test_grammar_15():
 
-    from parser import RelationSubtract, Union, Intersection
+    from ra_parser import RelationSubtract, Union, Intersection
     
     document1 = '(A union B) minus (C intersect D)'
 
@@ -279,7 +279,7 @@ def test_grammar_17():
 
 def test_grammar_thetajoin():
 
-    from parser import GenericJoin, Eq
+    from ra_parser import GenericJoin, Eq
     
     document1 = 'A join[cola=colb] B'
 
@@ -295,7 +295,7 @@ def test_grammar_thetajoin():
 
 def test_grammar_naturaljoin():
 
-    from parser import GenericJoin, Eq
+    from ra_parser import GenericJoin, Eq
     
     document1 = 'A left join B'
 
@@ -379,7 +379,7 @@ def test_expression_bound_variable():
 
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     r = Relation(
         cols = ['a', 'b'],
@@ -397,7 +397,7 @@ def test_relation_compute():
 
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     r = Relation(
         cols = ['a', 'b'],
@@ -420,7 +420,7 @@ def test_relation_project():
 
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     r = Relation(
         cols=['a', 'b'],
@@ -443,7 +443,7 @@ def test_relation_select():
 
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     r = Relation(
         cols=['a', 'b'],
@@ -466,7 +466,7 @@ def test_relation_rename():
 
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     r = Relation(
         cols=['a', 'b'],
@@ -489,7 +489,7 @@ def test_relation_union():
 
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     a = Relation(
         cols=['a', 'b'],
@@ -516,7 +516,7 @@ def test_semantic_18():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     r = Relation(
         cols=['a', 'b'],
@@ -539,7 +539,7 @@ def test_semantic_19():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     employees = Relation(
         cols=['id', 'departmentid'],
@@ -566,7 +566,7 @@ def test_natural_join():
     
     ast = parse_to_ast(document)
 
-    from parser import GenericJoin, Relation
+    from ra_parser import GenericJoin, Relation
 
     employees = Relation(
         cols=['id', 'departmentid'],
@@ -598,7 +598,7 @@ def test_semantic_20():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     employees = Relation(
         cols=['id', 'managerid'],
@@ -622,7 +622,7 @@ def test_semantic_21():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     R = Relation(
         cols=['a', 'b'],
@@ -648,7 +648,7 @@ def test_semantic_22():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     people = Relation(
         cols=['age'],
@@ -671,7 +671,7 @@ def test_semantic_23():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     people = Relation(
         cols=['age', 'name'],
@@ -694,7 +694,7 @@ def test_semantic_24():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     people = Relation(
         cols=['age', 'name'],
@@ -720,7 +720,7 @@ def test_semantic_25():
     
     ast = parse_to_ast(document)
 
-    from parser import BoundTuple, Relation
+    from ra_parser import BoundTuple, Relation
 
     people = Relation(
         cols=['age', 'name'],

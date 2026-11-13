@@ -1,4 +1,4 @@
-from parser import Relation
+from ra_parser import Relation
 
 employees = Relation(
     cols=['id', 'name', 'departmentid', 'managerid'],

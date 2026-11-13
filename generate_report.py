@@ -1,4 +1,4 @@
-from parser import Relation
+from ra_parser import Relation
 from test import parse_to_ast
 
 from random import randint

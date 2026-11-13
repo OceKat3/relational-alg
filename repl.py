@@ -1,5 +1,5 @@
 from example_relations import example_relations
-from parser import tokenizer, Recognizer, Parser, RelationalTreeReducer, Relation
+from ra_parser import tokenizer, Recognizer, Parser, RelationalTreeReducer, Relation
 
 from typing import Literal
 

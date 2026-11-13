@@ -1,4 +1,4 @@
-from parser import relational_algebra_grammar, is_token_terminal, identifier, number
+from ra_parser import relational_algebra_grammar, is_token_terminal, identifier, number
 
 ebnf = "\n\n".join(
     f"{goal} = " + '\n     | '.join(
