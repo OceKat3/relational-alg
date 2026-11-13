@@ -1,0 +1,288 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html><head></head><body>
+
+    <div style="max-width:780px;margin:0 auto;font:16px/1.6 Georgia,serif;color:#1b1a18;">
+
+<div style="border-bottom:3px solid #1b1a18;padding-bottom:16px;margin-bottom:28px;">
+<p style="margin:0 0 16px;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005 &#160;&#183;&#160; Fall 2026 &#160;&#183;&#160; Project 2 &#160;&#183;&#160; <span style="color:#1b1a18;font-weight:bold;">Module 1</span></p>
+<h1 style="margin:0 0 6px;font:bold 30px/1.15 Georgia,serif;">Storage Engine and Buffer Pool</h1>
+<p style="margin:0;font:italic 17px/1.4 Georgia,serif;color:#4a4642;">Pages, records, heap files, replacement policies</p>
+</div>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">This document defines every structure and operation in Module 1 exactly. Where a byte offset or a formula is given, it is required, not a suggestion. Where a choice is left to you, the text says so and asks you to document it.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The reason for this precision is that I grade this module by running your tool on my files and comparing numbers. Two correct implementations must produce the same counters.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">1</span>&#160;&#160;Files and page addressing</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">One file per table, named <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">&lt;table&gt;.db</code>, plus one <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">catalog.db</code>. Every file is a sequence of 4096 byte pages with no header outside the pages themselves.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A page id is the zero-based index of the page inside its file. Page id 0 is the first page. A record id, written rid, is the pair (page id, slot number).</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">All multi-byte integers are little-endian. Unsigned unless stated.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">2</span>&#160;&#160;Record format</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A record is the concatenation of its field encodings, in schema order. There is no record header and no null bitmap, because this project has no NULL values.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:130px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Type</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">Encoding</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">INT</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">4 bytes, signed, two&#39;s complement.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">VARCHAR(n)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">2 byte unsigned length L, then L bytes of UTF-8. L must not exceed n. n must not exceed 255.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Example.</strong> Schema <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">(a INT, b VARCHAR(5), c INT)</code> and tuple <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">(42, &#39;bob&#39;, 7)</code>.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">a   2A 00 00 00          4 bytes
+b   03 00 62 6F 62       2 + 3 bytes
+c   07 00 00 00          4 bytes
+                        ---------
+record length            13 bytes</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Record length is therefore fixed for a schema of INT columns and variable when any VARCHAR is present. Your code must not assume fixed length.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">3</span>&#160;&#160;Slotted page format</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Header at the start, slot directory growing forward, record data growing backward from the end of the page.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">offset  size  field
+     0     4  page_id          uint32
+     4     2  slot_count       uint16   includes dead slots
+     6     2  free_end         uint16   lowest byte offset used by record data
+     8     4  slot 0           uint16 offset, uint16 length
+    12     4  slot 1
+   ...
+                               &lt;-- free space --&gt;
+ free_end                      record data, newest at the lowest offset
+  4095                         end of page</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A slot with offset 0 is dead, meaning the record it referred to was deleted. Slot numbers are never reused and never renumbered, because a rid must stay valid.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Free space on a page is <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">free_end − (8 + 4 &#215; slot_count)</code>. An insert of a record of length L needs L + 4 bytes of free space, because it also needs a new slot.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">3.1&#160;&#160;Operations</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">insert(record) -&gt; slot_no or NO_SPACE
+    L = len(record)
+    if free_space &lt; L + 4: return NO_SPACE
+    free_end  = free_end - L
+    write record at free_end
+    slot[slot_count] = (free_end, L)
+    slot_count = slot_count + 1
+    return slot_count - 1
+
+get(slot_no) -&gt; record
+    error if slot_no &gt;= slot_count
+    error if slot[slot_no].offset == 0        // deleted
+    return bytes at offset, length
+
+delete(slot_no)
+    error if already dead
+    slot[slot_no] = (0, 0)
+    // space is NOT reclaimed until compaction</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">3.2&#160;&#160;Worked example</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">An empty page, then three inserts of 13, 20 and 13 bytes, then a delete of slot 1. Your <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">layout</code> command must produce these numbers.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">After</th>
+<th style="width:90px;text-align:right;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">slot_count</th>
+<th style="width:90px;text-align:right;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">free_end</th>
+<th style="width:90px;text-align:right;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">free space</th>
+<th style="width:150px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">slot directory</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">empty page</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">0</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4096</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4088</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">empty</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">insert 13 bytes</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">1</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4083</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4071</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">0:(4083,13)</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">insert 20 bytes</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">2</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4063</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4047</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">1:(4063,20)</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">insert 13 bytes</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">3</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4050</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4030</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">2:(4050,13)</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">delete slot 1</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">3</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4050</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">4030</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">1:(0,0)</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Note the last row. Deleting a 20 byte record freed no usable space. Compaction is optional in this module. If you implement it, document when it runs and show the before and after in your design document.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">3.3&#160;&#160;Capacity</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">For fixed length records of L bytes, the number per page is <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">floor(4088 / (L + 4))</code>. For L = 13 that is 240. You will be asked to confirm this by measurement in Section 8.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A record longer than 4088 bytes cannot be stored. Report this as an error naming the table and the row. Overflow pages are out of scope.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">4</span>&#160;&#160;Heap file</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A heap file is a linked list of directory pages, each listing data pages and their free space. Page 0 of every table file is the first directory page.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">directory page layout
+offset  size  field
+     0     4  page_id          uint32
+     4     4  next_dir_page    uint32, 0xFFFFFFFF if none
+     8     2  entry_count      uint16
+    10     6  entry 0          uint32 data_page_id, uint16 free_bytes
+    16     6  entry 1
+   ...
+
+capacity = floor((4096 - 10) / 6) = 681 entries per directory page</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">4.1&#160;&#160;Operations</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">insert(record) -&gt; rid
+    walk directory pages, first fit, looking for free_bytes &gt;= len+4
+    if found: fetch that data page, insert, update the entry, unpin both
+    if none:  allocate a new data page, add an entry, insert there
+    return (page_id, slot_no)
+
+get(rid) -&gt; record
+    fetch page, read slot, unpin. Two page accesses at most.
+
+delete(rid)
+    fetch page, mark slot dead, update directory free_bytes, unpin
+
+scan() -&gt; iterator of (rid, record)
+    for each directory page:
+      for each entry:
+        fetch data page
+        for each live slot: yield
+        unpin data page before moving on</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The scan rule is strict. At most one data page and one directory page may be pinned at any instant during a scan. A scan that reads the whole table into a list fails this module no matter what it returns, and it will be visible as a page read count that does not grow with the memory budget.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">5</span>&#160;&#160;Buffer pool</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A fixed array of B frames. Each frame holds one page&#39;s bytes, a pin count and a dirty flag. A page table maps page id to frame index.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">fetch_page(page_id) -&gt; page
+    if page_id in page_table:
+        pin_count += 1
+        policy.on_access(frame)         // counts as a HIT
+        return frame
+    frame = policy.choose_victim()      // only frames with pin_count == 0
+    if frame is None: error &quot;no unpinned frame available&quot;
+    if frame.dirty: disk.write_page(frame.page_id, frame.data)   // WRITE
+    disk.read_page(page_id) into frame                           // READ
+    pin_count = 1, dirty = false
+    policy.on_access(frame)             // counts as a MISS and an EVICTION
+    return frame                        //   (eviction only if a page was replaced)
+
+unpin_page(page_id, is_dirty)
+    error if not resident or pin_count == 0
+    dirty = dirty or is_dirty
+    pin_count -= 1
+
+new_page() -&gt; page                      // zero filled, pinned, dirty
+flush_all()                             // write every dirty frame, clear flags
+stats() -&gt; { hits, misses, evictions, reads, writes }</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Counting rules, which must be exact. A hit is a fetch of a resident page. A miss is a fetch that required a disk read. An eviction is a miss that replaced a resident page, so the first B misses on an empty pool are not evictions. A read is one call to the disk manager&#39;s read. A write is one call to its write, whether caused by eviction or by flush.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.1&#160;&#160;LRU</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Keep an ordering of frames by last access. Every fetch, hit or miss, moves that frame to most recently used. The victim is the least recently used frame whose pin count is zero.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.2&#160;&#160;CLOCK</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Frames sit in a circle with a reference bit each and a hand pointing at one of them. Every fetch, hit or miss, sets that frame&#39;s reference bit to 1. A newly loaded page gets reference bit 1 and the hand advances past it.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">choose_victim()
+    swept = 0
+    loop:
+        f = frames[hand]
+        if f.pin_count &gt; 0:        hand += 1; swept += 1
+        else if f.ref == 1:        f.ref = 0; hand += 1; swept += 1
+        else:                      victim = f; hand += 1; return victim
+        if swept &gt; 2 * B: return None      // every frame pinned</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.3&#160;&#160;Worked example</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">B = 3, all pages clean, each page unpinned immediately after fetching. Trace <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">1 2 3 1 4 2</code>.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:60px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Fetch</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">LRU result, pool after</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">CLOCK result, pool after</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">1</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">miss, [1]</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">miss, [1]</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">2</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">miss, [1,2]</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">miss, [1,2]</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">3</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">miss, [1,2,3]</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">miss, [1,2,3]</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">1</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">hit, LRU order 2,3,1</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">hit, ref(1)=1</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">4</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">miss, evict 2, [3,1,4]</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">miss, sweep clears 1,2,3 then evicts 1, [4,2,3]</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">2</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">miss, evict 3, [1,4,2]</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">hit, ref(2)=1</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;font-weight:bold;">Totals</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;font-weight:bold;">1 hit, 5 misses, 2 evictions</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;font-weight:bold;">2 hits, 4 misses, 1 eviction</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Run this trace first. If your numbers differ from the table, your policy is wrong and every later measurement will be wrong with it.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">6</span>&#160;&#160;Catalog and loading</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The catalog lives in <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">catalog.db</code> and is read through the buffer pool like any other data. Its on-page format is yours to design, and your design document must give it. For each table it stores the name, the ordered list of columns with type and length, the data file name, the number of pages and the number of live tuples. Module 4 will add statistics to the same structure, so leave room.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The loader reads a CSV file with no header line, one record per line, fields separated by commas. A field containing a comma must be wrapped in double quotes. An INT field that does not parse, or a VARCHAR longer than its declared length, is an error naming the line number, and the load stops.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">7</span>&#160;&#160;Command line interface</h2>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">storage create-table --db DIR --name R --schema &quot;a:INT,b:VARCHAR(20),c:INT&quot;
+storage load         --db DIR --table R --file r.csv
+storage scan         --db DIR --table R --frames 8 [--limit N] --json
+storage layout       --db DIR --table R --page 3
+storage trace        --db DIR --file trace.txt --frames 16 --policy lru|clock --json</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Required JSON shapes. Extra fields are allowed. Missing or renamed fields fail the automated check.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">scan --json
+{ &quot;table&quot;: &quot;R&quot;,
+  &quot;schema&quot;: [[&quot;a&quot;,&quot;INT&quot;],[&quot;b&quot;,&quot;VARCHAR&quot;,20],[&quot;c&quot;,&quot;INT&quot;]],
+  &quot;rows&quot;: [[42,&quot;bob&quot;,7],[43,&quot;amy&quot;,9]],
+  &quot;stats&quot;: {&quot;hits&quot;:12,&quot;misses&quot;:4,&quot;evictions&quot;:1,&quot;reads&quot;:4,&quot;writes&quot;:0} }
+
+trace --json
+{ &quot;policy&quot;:&quot;lru&quot;, &quot;frames&quot;:16,
+  &quot;hits&quot;:812, &quot;misses&quot;:188, &quot;evictions&quot;:172, &quot;reads&quot;:188, &quot;writes&quot;:0 }</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A trace file holds one page id per line. Your pool fetches each one and unpins it immediately as clean. Five traces are published with this document. Two more are held back for grading.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">8</span>&#160;&#160;Required measurements</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Capacity.</strong> For three schemas, one all INT, one with a short VARCHAR and one with a VARCHAR(200), compute records per page by hand from Section 3 and then measure it by loading data. One table, three rows, with the computed and measured values side by side. Explain any difference.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Policies.</strong> Run all five published traces under both policies at B = 4, 16, 64 and 256. Report hit rate in one table of twenty rows per policy. Trace 3 is a sequential scan of an 80 page file repeated ten times. State what LRU achieves on it at B = 64, explain the mechanism in two sentences, and say which policy you would ship and why.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Scan cost.</strong> Scan a 500 page table at B = 2, 8 and 64. Page reads should be roughly 500 in every case. If your number falls as B grows, explain what is being cached. If it rises, something is wrong.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">9</span>&#160;&#160;Errors</h2>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:250px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Evicting a pinned page</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Never happens. If no unpinned frame exists, fetch fails with an error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Unpinning a page at pin count 0</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Error. This catches the most common bug in this module.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Reading a dead slot</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Error naming the rid.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Record longer than 4088 bytes</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Error naming the table and row.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Bad CSV field</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Error naming the line number and the column.</td></tr>
+</tbody>
+</table>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">10</span>&#160;&#160;Deliverables and checklist</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DESIGN_M1.md</code> with your catalog page format, your free space strategy, your compaction decision, and a byte level diagram of a real page from your own files. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">REPORT_M1.md</code> with the three measurements. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DESIGN_LOG.md</code> entries. Tests.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Before you submit, confirm the following.</p>
+
+<ul style="margin:0 0 16px;padding-left:22px;">
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">The page example in Section 3.2 reproduces exactly.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">The buffer example in Section 5.3 reproduces exactly, both policies.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">A scan of a table twenty times larger than B completes, and never pins more than two pages.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Running the same command twice gives identical counters.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Deleting every record in a table and scanning it returns nothing, without error.</li>
+</ul>
+
+<p style="margin:30px 0 0;padding-top:14px;border-top:1px solid #d6d2cc;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005, Project 2, Module 1. Traces and sample data are published alongside this document.</p>
+
+</div>
+</body></html>

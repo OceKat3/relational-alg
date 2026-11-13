@@ -1,0 +1,283 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html><head></head><body>
+
+
+
+
+
+
+
+
+
+<div style="max-width:780px;margin:0 auto;font:16px/1.6 Georgia,serif;color:#1b1a18;">
+
+<div style="border-bottom:3px solid #1b1a18;padding-bottom:16px;margin-bottom:28px;">
+<p style="margin:0 0 16px;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005 &#160;&#183;&#160; Fall 2026 &#160;&#183;&#160; Project 2 &#160;&#183;&#160; <span style="color:#1b1a18;font-weight:bold;">Module 3</span></p>
+<h1 style="margin:0 0 6px;font:bold 30px/1.15 Georgia,serif;">SQL Front End</h1>
+<p style="margin:0;font:italic 17px/1.4 Georgia,serif;color:#4a4642;">Parsing SQL, resolving names, translating to relational algebra</p>
+</div>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">SQL text goes in. A logical plan comes out. The parser is the easy half. The hard half is deciding what a query means, because SQL names columns loosely, computes on bags rather than sets, and never says in what order to do anything.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">1</span>&#160;&#160;Lexical rules</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Hand-written scanner, as in Bonus Project 1. No regular expressions, no parser generators, no <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">eval</code>.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:170px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Keywords</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Case insensitive. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">SELECT</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">select</code> and <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">SeLeCt</code> are the same token.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Identifiers</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Case sensitive. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">Emp</code> and <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">emp</code> are different tables. Letter or underscore, then letters, digits, underscores.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Strings</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Single quoted. Two single quotes inside mean one literal quote, as in Bonus Project 1.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Numbers</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Integers only, optionally signed.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Operators</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Maximal munch. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">&lt;=</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">&gt;=</code> and <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">&lt;&gt;</code> are single tokens.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Comments</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">--</code> to end of line.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Statements</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Separated by semicolons. A file may hold several.</td></tr>
+</tbody>
+</table>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">2</span>&#160;&#160;The SQL subset</h2>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">statement   ::= create | insert | query
+
+create      ::= CREATE TABLE ident &quot;(&quot; coldef { &quot;,&quot; coldef } &quot;)&quot;
+coldef      ::= ident ( INT | VARCHAR &quot;(&quot; int &quot;)&quot; )
+
+insert      ::= INSERT INTO ident VALUES &quot;(&quot; literal { &quot;,&quot; literal } &quot;)&quot;
+
+query       ::= select_block { setop select_block }
+setop       ::= UNION [ ALL ] | INTERSECT | EXCEPT
+
+select_block ::= SELECT [ DISTINCT ] select_list
+                 FROM from_list
+                 [ WHERE condition ]
+                 [ GROUP BY col_list [ HAVING condition ] ]
+                 [ ORDER BY sort_list ]
+                 [ LIMIT int ]
+               | &quot;(&quot; query &quot;)&quot;
+
+select_list ::= &quot;*&quot; | select_item { &quot;,&quot; select_item }
+select_item ::= ( column | aggregate ) [ AS ident ]
+aggregate   ::= ( COUNT | SUM | AVG | MIN | MAX ) &quot;(&quot; ( column | &quot;*&quot; ) &quot;)&quot;
+
+from_list   ::= table_ref { &quot;,&quot; table_ref }
+              | table_ref JOIN table_ref ON condition { JOIN table_ref ON condition }
+table_ref   ::= ident [ AS ident ] | &quot;(&quot; query &quot;)&quot; AS ident
+
+condition   ::= disjunction of conjunctions of comparisons, with NOT and parentheses
+comparison  ::= operand ( &quot;=&quot; | &quot;&lt;&gt;&quot; | &quot;&lt;&quot; | &quot;&lt;=&quot; | &quot;&gt;&quot; | &quot;&gt;=&quot; ) operand
+operand     ::= column | int | string
+column      ::= ident | ident &quot;.&quot; ident</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Precedence inside conditions, tightest first, is <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">NOT</code>, then <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">AND</code>, then <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">OR</code>. Set operators are left associative and all at the same precedence, so <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">A UNION B EXCEPT C</code> means <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">(A UNION B) EXCEPT C</code>. State both in your grammar document and enforce them in the grammar, not in the parser code.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">3</span>&#160;&#160;Name resolution</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">After parsing, build a scope from the FROM clause. Each table reference contributes one entry, keyed by its alias if it has one and by its table name otherwise. A subquery in FROM must have an alias and contributes that alias with the subquery&#39;s output schema.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Then resolve every column reference by these rules, in order.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:210px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Two entries share a name</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Error. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">FROM Emp, Emp</code> is a duplicate alias error. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">FROM Emp e, Emp m</code> is fine.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Qualified <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">t.c</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">t must be in scope, c must exist in t. Otherwise error naming which part failed.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Unqualified <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">c</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Exactly one scope entry must contain c. Zero is an unknown column error. Two or more is an ambiguous column error naming the candidates.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">SELECT *</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Expands to every column of every scope entry, in FROM order then schema order, each fully qualified. Shared column names are not an error here, because the expansion qualifies them.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ORDER BY</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Resolve first against output aliases in the select list, then against the FROM scope. A column not in the select list is allowed.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Every resolved column becomes a fully qualified name in the logical plan. After this pass no unqualified name survives anywhere.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">3.1&#160;&#160;Aggregation rules</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A query is aggregating if it has a GROUP BY clause or an aggregate anywhere in its select list. In an aggregating query the select list may contain only grouping columns and aggregates. A bare column that is not a grouping column is an error. HAVING may reference only grouping columns and aggregates. An aggregate in WHERE is always an error, because WHERE runs before grouping.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">3.2&#160;&#160;Type rules</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Comparison between different types is an error, including equality, exactly as in Bonus Project 1. SUM and AVG require an INT column. COUNT accepts anything. MIN and MAX accept either type. Set operators require the same column count and the same type in each position.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">4</span>&#160;&#160;Bags, not sets</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">In Bonus Project 1 your projection removed duplicates, because relational algebra is defined on sets. SQL is defined on bags, and this module must follow SQL. The consequences are specific.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:190px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A scan</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Returns a bag. Identical rows in a table stay identical rows.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">project</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Keeps duplicates. Never emit a <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">distinct</code> node just because a projection dropped columns.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">SELECT DISTINCT</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Emits a <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">distinct</code> node above the projection.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">UNION ALL</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">union_all</code> node alone.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">UNION</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">union</code> node, which deduplicates.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">INTERSECT</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">EXCEPT</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Set semantics, so the result has no duplicates even if the inputs did.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">GROUP BY</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Produces one row per distinct group, so it deduplicates the grouping columns by construction. Adding <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DISTINCT</code> above it is redundant. Do not emit it.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Your design document must state where duplicate elimination happens in your translator and why. This is the section I will read first.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">5</span>&#160;&#160;Translation</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Build the logical plan in this canonical order, bottom to top. Your translator makes no optimization decisions. Module 4 does that.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">1  FROM      scans, renames for aliases, joins or cross products left to right
+2  WHERE     one select node carrying the whole condition unchanged
+3  GROUP BY  group_by node
+4  HAVING    select node above the group_by
+5  SELECT    project node, then distinct if DISTINCT was written
+6  ORDER BY  sort node
+7  LIMIT     limit node
+8  set ops   applied between whole blocks, left associative</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Logical operator names are <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">scan</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">select</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">project</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">join</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">cross</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">rename</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">group_by</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">distinct</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">sort</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">limit</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">union</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">union_all</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">intersect</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">except</code>. A logical plan never names a physical algorithm. It says <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">join</code>, never <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">hash_join</code>.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.1&#160;&#160;Example, a plain filter and projection</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT name, age FROM Emp WHERE age &gt; 30;
+
+{ &quot;op&quot;:&quot;project&quot;, &quot;columns&quot;:[&quot;Emp.name&quot;,&quot;Emp.age&quot;],
+  &quot;child&quot;: { &quot;op&quot;:&quot;select&quot;, &quot;condition&quot;:&quot;Emp.age &gt; 30&quot;,
+             &quot;child&quot;: { &quot;op&quot;:&quot;scan&quot;, &quot;table&quot;:&quot;Emp&quot; } } }</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">No <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">distinct</code>, because DISTINCT was not written. If two employees share a name and age, both rows appear.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.2&#160;&#160;Example, a join with aliases</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT e.name, d.title
+  FROM Emp e JOIN Dept d ON e.did = d.did
+ WHERE d.budget &gt; 1000;
+
+{ &quot;op&quot;:&quot;project&quot;, &quot;columns&quot;:[&quot;e.name&quot;,&quot;d.title&quot;],
+  &quot;child&quot;: { &quot;op&quot;:&quot;select&quot;, &quot;condition&quot;:&quot;d.budget &gt; 1000&quot;,
+    &quot;child&quot;: { &quot;op&quot;:&quot;join&quot;, &quot;condition&quot;:&quot;e.did = d.did&quot;,
+      &quot;left&quot;:  { &quot;op&quot;:&quot;rename&quot;, &quot;to&quot;:&quot;e&quot;,
+                 &quot;child&quot;: { &quot;op&quot;:&quot;scan&quot;, &quot;table&quot;:&quot;Emp&quot; } },
+      &quot;right&quot;: { &quot;op&quot;:&quot;rename&quot;, &quot;to&quot;:&quot;d&quot;,
+                 &quot;child&quot;: { &quot;op&quot;:&quot;scan&quot;, &quot;table&quot;:&quot;Dept&quot; } } } } }</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The WHERE predicate sits above the join even though it only touches one side. Leaving it there is correct. Moving it down is Module 4&#39;s job and doing it here loses marks.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.3&#160;&#160;Example, comma join</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT * FROM Emp e, Dept d WHERE e.did = d.did;
+
+project over
+  select  condition &quot;e.did = d.did&quot;
+    cross
+      rename e over scan Emp
+      rename d over scan Dept</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A comma produces <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">cross</code> and the predicate stays in the select above it. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">JOIN ... ON</code> produces <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">join</code> with the condition attached. The two forms are semantically equal, and recognising that is one of Module 4&#39;s rewrites, not yours.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.4&#160;&#160;Example, grouping with HAVING</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT did, COUNT(*) AS n, AVG(salary) AS avg_sal
+  FROM Emp
+ WHERE age &gt; 25
+ GROUP BY did
+HAVING COUNT(*) &gt; 5
+ ORDER BY n DESC
+ LIMIT 10;
+
+limit 10
+  sort [[&quot;n&quot;,&quot;desc&quot;]]
+    project [&quot;Emp.did&quot;,&quot;n&quot;,&quot;avg_sal&quot;]
+      select &quot;n &gt; 5&quot;                          -- HAVING
+        group_by keys [&quot;Emp.did&quot;]
+                 aggregates [[&quot;count&quot;,&quot;*&quot;,&quot;n&quot;],[&quot;avg&quot;,&quot;Emp.salary&quot;,&quot;avg_sal&quot;]]
+          select &quot;Emp.age &gt; 25&quot;               -- WHERE
+            scan Emp</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">WHERE is below the grouping and HAVING is above it. That is the whole difference between the two clauses, and it is why an aggregate cannot appear in WHERE. Aggregate output names come from the AS alias if given, and otherwise from a rule you define and document, such as <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">count_star</code> or <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">avg_Emp_salary</code>.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.5&#160;&#160;Example, self join</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT e.name, m.name FROM Emp e JOIN Emp m ON e.mgr = m.eid;
+
+join condition &quot;e.mgr = m.eid&quot;
+  rename e over scan Emp
+  rename m over scan Emp</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The same table scanned twice under two names. Without the renames, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">Emp.name</code> would be ambiguous and the query would have no meaning. This is the rename operator from Bonus Project 1 doing exactly the job it was built for.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.6&#160;&#160;Example, subquery in FROM</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT t.did, t.n
+  FROM (SELECT did, COUNT(*) AS n FROM Emp GROUP BY did) AS t
+ WHERE t.n &gt; 3;
+
+project [&quot;t.did&quot;,&quot;t.n&quot;]
+  select &quot;t.n &gt; 3&quot;
+    rename t
+      project [&quot;Emp.did&quot;,&quot;n&quot;]
+        group_by keys [&quot;Emp.did&quot;] aggregates [[&quot;count&quot;,&quot;*&quot;,&quot;n&quot;]]
+          scan Emp</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The subquery is translated on its own and then renamed. Its output schema becomes the scope entry for <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">t</code>, so the outer query can see <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">t.n</code> and nothing else.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.7&#160;&#160;Example, the two unions</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT city FROM Emp UNION ALL SELECT city FROM Dept;
+   union_all( project[Emp.city](scan Emp), project[Dept.city](scan Dept) )
+
+SELECT city FROM Emp UNION SELECT city FROM Dept;
+   union( project[Emp.city](scan Emp), project[Dept.city](scan Dept) )</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Same inputs, one node different, and in a large database the difference between these two plans is a sort of the whole result. Your <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">explain</code> output must make the difference visible.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">6</span>&#160;&#160;Errors</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">One format for everything. No stack traces.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">error: &lt;category&gt;: &lt;message&gt; at line L, column C
+
+categories: lexical, syntax, name, ambiguity, type, aggregate, schema</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Panic mode is enough. Report the first error and stop. Multi-error recovery is not graded.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">7</span>&#160;&#160;Required cases</h2>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:30px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">1</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">The self join in 5.5. Two renames over one table.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">2</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">SELECT *</code> over three tables where two share a column name. Expansion qualifies both, no error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">3</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">An unqualified column present in two tables. Ambiguity error naming both candidates.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">4</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">UNION</code> and <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">UNION ALL</code> on identical inputs, producing different plans.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">5</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">WHERE and HAVING in one query, landing on opposite sides of the grouping.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">6</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A non-grouped column in the select list of a GROUP BY query. Aggregate error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">7</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">An aggregate in WHERE. Aggregate error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">8</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A subquery in FROM with an alias, joined to a base table.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">9</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ORDER BY</code> on a column that is not in the select list.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">10</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">WHERE age &gt; &#39;30&#39;</code> where age is INT. Type error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">11</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Unknown table and unknown column, with different messages.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">12</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">FROM Emp, Emp</code> without aliases. Duplicate alias error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">13</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">SELECT COUNT(*) FROM Emp</code> with no GROUP BY. One row out, even when Emp is empty.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">14</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A UNION of two queries whose column types do not match. Schema error.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">15</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">A four table join chain, written both with commas and with JOIN ON, producing plans that differ only in where the predicates sit.</td></tr>
+</tbody>
+</table>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">8</span>&#160;&#160;Command line interface</h2>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">sql parse   --query &quot;SELECT ...&quot; --explain      // indented tree, no catalog needed
+sql compile --db DIR --file q.sql --json        // logical plan JSON
+sql check   --db DIR --file q.sql               // errors only, exit code 0 or 1</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">I grade this module by compiling my own SQL files against a catalog I supply and comparing your logical plans structurally. Node names and field names must match this document. Node order within a plan must match the canonical order in Section 5.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">9</span>&#160;&#160;Deliverables and checklist</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">GRAMMAR_SQL.md</code> with your EBNF, your precedence and associativity table, and the places where your grammar differs from the sketch in Section 2 and why. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DESIGN_M3.md</code> with your scope and resolution algorithm, your bag semantics decisions, and your aggregate naming rule. Tests for all fifteen cases. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DESIGN_LOG.md</code> entries.</p>
+
+<ul style="margin:0 0 16px;padding-left:22px;">
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Every example in Section 5 reproduces as a plan with the same shape.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">No logical plan you produce contains a physical operator name.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">No logical plan contains an unqualified column reference.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">No predicate has been moved from where the SQL put it.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Plans from this module load and run in your Module 2 executor once Module 4 turns them physical.</li>
+</ul>
+
+<p style="margin:30px 0 0;padding-top:14px;border-top:1px solid #d6d2cc;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005, Project 2, Module 3. The logical plan JSON schema and a sample catalog are published alongside this document.</p>
+
+</div>
+
+
+
+</body></html>

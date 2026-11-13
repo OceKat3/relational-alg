@@ -1,0 +1,210 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html><head></head><body>
+
+
+<div style="max-width:780px;margin:0 auto;font:16px/1.6 Georgia,serif;color:#1b1a18;">
+
+<div style="border-bottom:3px solid #1b1a18;padding-bottom:16px;margin-bottom:28px;">
+<p style="margin:0 0 16px;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005 &#160;&#183;&#160; Fall 2026 &#160;&#183;&#160; Project 2 &#160;&#183;&#160; <span style="color:#1b1a18;font-weight:bold;">Module 4</span></p>
+<h1 style="margin:0 0 6px;font:bold 30px/1.15 Georgia,serif;">Query Optimizer</h1>
+<p style="margin:0;font:italic 17px/1.4 Georgia,serif;color:#4a4642;">Statistics, estimates, rewrites, and choosing among plans</p>
+</div>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A logical plan in, a physical plan out. The logical plan says join. You decide which join, in what order, over which access paths, and you decide it from numbers you computed rather than from the order the user happened to type.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">This module is also where you learn that the numbers lie. Half the marks sit in the part of the report where you show your own optimizer being wrong.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">1</span>&#160;&#160;Statistics</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Computed by an <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ANALYZE</code> command that scans the table once and stores the result in the catalog from Module 1. Compute exactly. No sampling, so that your numbers are reproducible and checkable.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:150px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Statistic</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">Meaning</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">n_tuples(T)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Live tuples in the table.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">n_pages(T)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Data pages, excluding directory pages.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">width(T)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Average record length in bytes.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ndv(T.c)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Number of distinct values in the column.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">min(T.c)</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">max(T.c)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Lowest and highest value.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">hist(T.c)</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Equi-depth histogram, k buckets, each holding its value range, its tuple count and the number of distinct values inside it.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Equi-depth means every bucket holds roughly the same number of tuples, so bucket boundaries are close together where data is dense. Build it by sorting the column and cutting at every n/k-th value. Bucket count k is set by <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">--buckets</code> and defaults to 20. The sort must use your external sort from Module 2, because ANALYZE on a large table cannot hold the column in memory.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">2</span>&#160;&#160;Selectivity</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Selectivity is the fraction of input tuples a predicate keeps, between 0 and 1. These are the required default formulas. You may improve on them, and several are worth improving, but your design document must state what you implemented and why.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:190px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Predicate</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">Selectivity</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">c = v</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Find the bucket holding v. Selectivity is <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">count(bucket) / (n_tuples &#215; ndv(bucket))</code>. With no histogram, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">1 / ndv(c)</code>.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">c &lt; v</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">c &gt; v</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Sum whole buckets on the correct side, plus a linear fraction of the bucket containing v.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">c &lt;&gt; v</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">1 − sel(c = v)</code></td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">p AND q</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">sel(p) &#215; sel(q)</code>. This assumes independence, which is the assumption you will later break on purpose.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">p OR q</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">sel(p) + sel(q) − sel(p) &#215; sel(q)</code></td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">NOT p</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">1 − sel(p)</code></td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">R.a = S.b</code> (join)</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Output rows are <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">n(R) &#215; n(S) / max(ndv(R.a), ndv(S.b))</code>.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Any other join predicate</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Selectivity 0.1 by default. Say so in your document rather than hiding it.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Output cardinality of a node is the input cardinality times the selectivity, rounded up, never below 1. Output pages are <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ceil(rows &#215; width / 4096)</code>, which is how a projection that drops columns reduces later costs.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Worked example.</strong> Emp has 10,000 tuples on 200 pages. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ndv(did) = 50</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">age</code> runs from 20 to 70 uniformly. Dept has 50 tuples, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">ndv(did) = 50</code>.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">did = 7            sel = 1/50  = 0.02   -&gt;   200 rows
+age &gt; 60           sel = 10/50 = 0.20   -&gt;  2000 rows
+did = 7 AND age&gt;60 sel = 0.004          -&gt;    40 rows
+Emp JOIN Dept on did    10000 * 50 / max(50,50) = 10000 rows</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">That last line is worth pausing on. Joining every employee to their department returns one row per employee, which is exactly 10,000. The formula gets it right here because <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">did</code> is a key of Dept. It will not always be this kind.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">3</span>&#160;&#160;Rewrite rules</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Applied to the logical plan before costing. Each rule has a precondition, and a rule applied where its precondition fails produces wrong answers rather than slow ones.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:40px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">#</th>
+<th style="width:180px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Rule</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">Precondition</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">1</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Split conjunctions. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">select[p AND q]</code> becomes two stacked selects.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">None. Always safe, and it is what makes rule 2 possible.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">2</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Push a select below a join or cross.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">The predicate references columns from one side only. Push it to that side.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">3</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Turn cross plus select into join.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">The predicate references both sides and is an equality. This is what makes a comma join as good as a JOIN ON.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">4</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Push a select below a rename, union or union_all.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Rewrite column names through the rename. For unions, push into both branches.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">5</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Push a select below a group_by.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Only if the predicate references grouping columns alone. A predicate on an aggregate can never move. This is HAVING against WHERE seen from the other direction.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">6</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Push projections down.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Insert a projection below an operator keeping only columns its ancestors need, plus the ones that operator needs itself. Never drop a column a predicate above still references.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;color:#a6192e;font-weight:bold;">7</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Remove a projection that drops nothing, and collapse adjacent selects.</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Cosmetic, but it makes your explain output readable.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Worked example.</strong> The comma join from Module 3, before and after.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">SELECT e.name FROM Emp e, Dept d
+ WHERE e.did = d.did AND e.age &gt; 60 AND d.budget &gt; 1000;
+
+before                              after
+project [e.name]                    project [e.name]
+  select e.did=d.did                  join e.did=d.did
+    select e.age&gt;60                     project [e.name,e.did]
+      select d.budget&gt;1000                select e.age&gt;60
+        cross                               rename e (scan Emp)
+          rename e (scan Emp)             project [d.did]
+          rename d (scan Dept)              select d.budget&gt;1000
+                                              rename d (scan Dept)</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Three rules fired. Rule 1 split the conjunction, rule 2 pushed the two single-sided predicates to their own sides, rule 3 converted the cross into a join. Rule 6 then added the two projections. Your <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">explain</code> must be able to show both trees, because your report needs the comparison.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">4</span>&#160;&#160;Cost model</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Cost is page I/O, reads plus writes. CPU is ignored. M and N are estimated page counts of the inputs, and B is the memory budget.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">seqscan                M
+filter, project        0            pipelined, no I/O of its own
+sort                   2 * M * (passes - 1) + M
+                       passes = 1 + ceil( log(ceil(M/B)) / log(B-1) )
+distinct, group_by     cost of the sort or of the hash partitioning it uses
+nested_loop_join       M + ceil(M / (B-2)) * N
+sort_merge_join        sort(M) + sort(N) + M + N
+hash_join              3 * (M + N)
+limit                  0</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">These must match the formulas in Module 2, because your report compares the cost your optimizer predicted against the I/O your executor actually performed. If the two modules disagree about what a hash join costs, say which is right and fix the other.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">5</span>&#160;&#160;Join enumeration</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Dynamic programming over left-deep trees, in the style of Selinger. Up to six relations.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">best[{r}] = the cheapest access path for r alone, for every relation r
+
+for size k = 2 .. n:
+    for every subset S of the relations with |S| = k:
+        best[S] = min over r in S, over each join algorithm A, of
+                      cost( best[S - {r}]  A-join  best[{r}] )
+        skip any pairing with no join predicate between S-{r} and r,
+            unless no alternative exists
+
+answer = best[all relations]</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Left-deep means the right input of every join is a base relation, never another join. Your design document must say what that restriction gives up and what it buys. The honest answer involves the size of the search space and the fact that a left-deep tree can pipeline its outer side.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">5.1&#160;&#160;Worked example</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Three relations, B = 32. A is 100 pages and 5,000 tuples, B′ is 10 pages and 500 tuples, C is 400 pages and 20,000 tuples. Predicates are <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">A.x = B&#39;.x</code> with 1,000 estimated output rows, 20 pages, and <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">B&#39;.y = C.y</code> with 2,000 output rows, 40 pages. There is no predicate between A and C.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:110px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Subset</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Best plan considered</th>
+<th style="width:80px;text-align:right;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">Cost</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{A}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">scan A</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">100</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{B′}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">scan B′</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">10</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{C}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">scan C</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">400</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{A,B′}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">B′ outer, BNL with A inner, 10 + 1&#215;100</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">110</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{B′,C}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">B′ outer, BNL with C inner, 10 + 1&#215;400</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">410</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{A,C}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">no predicate, skipped</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">—</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{A,B′,C}</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">{A,B′} outer (20 pages), BNL with C inner, 110 + 20 + 1&#215;400</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;font-weight:bold;">530</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">&#160;</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">alternative, {B′,C} outer (40 pages), BNL with A inner, 410 + 40 + 100</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">550</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The winner joins the small relation to A first, which keeps the intermediate result small enough to fit in B − 2 frames and makes the second join a single pass over C. Your <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">dp-table</code> command prints exactly this table for any query, which is how you debug the optimizer and how I check that it enumerated rather than guessed.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">6</span>&#160;&#160;Output and interface</h2>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">opt analyze  --db DIR --table R [--buckets 20]
+opt plan     --db DIR --logical q.json --frames 32 --json    // physical plan
+opt explain  --db DIR --logical q.json --frames 32
+opt dp-table --db DIR --logical q.json --frames 32
+
+explain output, one line per node
+hash_join (R.b = S.b)        est_rows=2000   est_cost=330
+  filter (R.a &gt; 500)         est_rows=1000   est_cost=0
+    seqscan R                est_rows=10000  est_cost=200
+  seqscan S                  est_rows=500    est_cost=10</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The physical plan must be valid input to your Module 2 executor with no editing. That is the test of this module more than any number in the report.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">7</span>&#160;&#160;Required measurements</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Estimation quality.</strong> For the twenty supplied queries, record estimated and actual rows at every node. Report q-error, the larger divided by the smaller, with the median and the worst case across all nodes. A median near 1 is good. A worst case in the hundreds is normal and is the interesting part.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Does optimization pay.</strong> For each query, measure the actual I/O of your chosen plan and of the unoptimized plan, meaning joins in written order with one fixed algorithm and no pushdown. Report the ratio per query and the range across the workload.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Which rule mattered.</strong> Turn off one rewrite rule at a time and rerun the workload. One row per rule, giving total I/O with and without it. Some rules will turn out to be worth almost nothing on this data. Say which, and say why.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Where it breaks.</strong> Two columns in the supplied dataset are strongly correlated, which means rule 2&#39;s independence assumption is false for predicates on both of them. Find a query where this makes your optimizer choose a bad plan. Give the estimate, give the actual, name the assumption that failed, and measure what the bad plan cost against the better one. Then describe what statistic would have prevented it.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">This last item carries more marks than the other three together. An optimizer that is never wrong on a workload I designed to break it has not been tested.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">8</span>&#160;&#160;Deliverables and checklist</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DESIGN_M4.md</code> with your statistics layout in the catalog, your selectivity formulas including any you improved, your rewrite rules with preconditions, your cost model, and your enumeration strategy with the left-deep justification. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">REPORT_M4.md</code> with the four measurements. The DP table for one four relation query, printed in full. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">DESIGN_LOG.md</code> entries.</p>
+
+<ul style="margin:0 0 16px;padding-left:22px;">
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">The rewrite example in Section 3 reproduces.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">The DP table in Section 5.1 reproduces, given those statistics.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Every physical plan you emit runs unedited in Module 2.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">A query written with commas and the same query written with JOIN ON produce the same physical plan.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Changing B changes which join algorithm is chosen for at least one query in the workload.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Running ANALYZE twice changes nothing.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">A plan with no statistics available still produces a valid plan, using documented defaults.</li>
+</ul>
+
+<p style="margin:30px 0 0;padding-top:14px;border-top:1px solid #d6d2cc;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005, Project 2, Module 4. The twenty query workload and the dataset are published alongside this document.</p>
+
+</div>
+
+
+</body></html>

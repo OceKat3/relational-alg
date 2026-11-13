@@ -1,0 +1,19 @@
+Friday nov 13
+
+For part 1 of this assignment, i did not keep a journal, but I streamed the entire development process to youtube
+
+I mostly write code through windows remote desktop, and streaming to youtube at the same time sometimes kills the quality of remote desktop... for this project, i have the foresight to start logging from the beginning, and I won't record the development process (unless I decide to change my mind later)
+
+My main reason for recording the development process was to provide evidence that this project is made with zero generative AI. I'll try to commit more often so that I'm still producing a work log of sorts. i.e. i still want to generate evidence that I wrote all this code myself
+
+
+I want to start by parsing SQL. I wrote a parser that works for like most grammars so at least i spared myself some work here. I think i can totally reuse the same tokenizer too, i'm very proud of it. This part will be really fun i think, i love parsing so much
+
+Once I get a SQL parse tree, it needs to be converted to some kind of abstract SQL representation. i.e. I need to replace the RelationalTreeReducer class. Then, i need to turn that into a relational algebra representation. Then the relational algebra AST can be optimized, which turns it from a logical plan into a physical plan. I haven't thought super hard about it yet, but the logical plan will have things like Cross and NaturalJoin, and the physical plan will have things like HashJoin and InMemorySort. i.e. the physical plan is an AST that also chooses a good algorithm. 
+
+The physical plan then needs to access or write to stuff on disk... I'll probably have a class of physical plan node called Relation which calls out to the storage engine. The storage engine should ideally be stateless except for the block cache. i.e. the storage engine is just a bunch of functions, or maybe a singleton class. I really want to support an in-memory store like :memory: in sqlite... i think it would be really useful for testing. 
+
+So like, high level, text from the repl -> sql parse tree -> sql AST -> relational algebra AST -> physical plan AST. and then some nodes inside the physical plan call out to the storage engine, and the root node of the physical plan outputs an in-memory relation to print to the rep, and/or it writes stuff to disk.
+
+Do I want to support indexes? The assignment says nothing about indexing or b trees so I think i'll write my implementation without indexes and maybe try to add them if I have time...
+

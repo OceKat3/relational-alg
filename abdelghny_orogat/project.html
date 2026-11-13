@@ -1,0 +1,476 @@
+<div class=" d2l-html-block-rendered "><div style="max-width: 780px;margin: 0 auto;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;color: #1b1a18;">
+<div style="border-bottom: 3px solid #1b1a18;padding-bottom: 18px;margin-bottom: 30px;">
+<p style="margin: 0 0 20px;font-family: Georgia,serif;font-size: 14px;line-height: 1.5;color: #4a4642;"><span style="color: #1b1a18;font-weight: bold;">Carleton University</span> &nbsp;·&nbsp; School of Computer Science &nbsp;·&nbsp; COMP 3005 Database Management Systems &nbsp;·&nbsp; Fall 2026</p>
+<h1 style="font-family: Georgia,serif;font-size: 32px;line-height: 1.15;font-weight: bold;color: #1b1a18;margin: 0 0 6px;">Project 2</h1>
+<p style="margin: 0 0 24px;font-family: Georgia,serif;font-size: 18px;line-height: 1.4;color: #4a4642;font-style: italic;">Build a database system, one module at a time</p>
+<table style="width: 100%;border-collapse: collapse;border-top: 1px solid #d6d2cc;margin: 0;">
+<tbody>
+<tr>
+<td style="width: 25%;padding: 12px 12px 0 0;border: none;vertical-align: top;font-family: Georgia,serif;"><span style="display: block;font-size: 12px;color: #4a4642;margin-bottom: 3px;">Structure</span> <span style="display: block;font-size: 15px;font-weight: bold;">Four modules plus integration</span></td>
+<td style="width: 25%;padding: 12px 12px 0 0;border: none;vertical-align: top;font-family: Georgia,serif;"><span style="display: block;font-size: 12px;color: #4a4642;margin-bottom: 3px;">Time</span> <span style="display: block;font-size: 15px;font-weight: bold;">Six weeks</span></td>
+<td style="width: 25%;padding: 12px 12px 0 0;border: none;vertical-align: top;font-family: Georgia,serif;"><span style="display: block;font-size: 12px;color: #4a4642;margin-bottom: 3px;">Work</span> <span style="display: block;font-size: 15px;font-weight: bold;">Individual</span></td>
+<td style="width: 25%;padding: 12px 0 0 0;border: none;vertical-align: top;font-family: Georgia,serif;"><span style="display: block;font-size: 12px;color: #4a4642;margin-bottom: 3px;">Submit</span> <span style="display: block;font-size: 15px;font-weight: bold;">GitHub, five checkpoints</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">You are building a working database system. Not a simulation of one. Text goes in as SQL, a plan comes out, and tuples are read from pages on disk through a buffer pool you wrote.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The system is split into four modules. Each one is defined by a contract, runs on its own through its own command line tool, and is graded on its own at its own checkpoint. You do not need the later modules to finish an earlier one, and a module that works alone but does not meet its contract will not compose with the others later. The last two weeks join them into one system.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">This is long. Nothing here is conceptually out of reach for a third year student, but there is a great deal of it, and the modules build on each other in a way that punishes shortcuts taken early. Bonus Project 1 is a prerequisite, for the reason given in Section 1.2.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">1</span>&nbsp;&nbsp;How the project is organised</h2>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">1.1&nbsp;&nbsp;The four modules</h3>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<thead>
+<tr>
+<th style="width: 60px;text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">Module</th>
+<th style="text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">What it does</th>
+<th style="width: 180px;text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 0 6px 0;">Contract boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M1</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Storage engine. Pages on disk, heap files, a buffer pool, a catalog.</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Page and tuple access API</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M2</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Execution engine. Iterator operators, external sort, three join algorithms, all under a memory budget.</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Physical plan JSON in</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M3</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">SQL front end. Hand-written parser, name resolution, type checking, translation to relational algebra.</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">SQL in, logical plan JSON out</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M4</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Optimizer. Statistics, selectivity estimation, rewrites, cost-based choice of join order and algorithm.</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Logical plan in, physical plan out</td>
+</tr>
+</tbody>
+</table>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The contracts are what make the modules independent. M2 consumes a physical plan written as JSON, so it can be tested long before an optimizer exists. M4 produces that same JSON, so it can be tested without a working executor. I will evaluate each module by feeding it files of my own and reading what comes out.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">This handout is the overview. Each module has its own specification document on Brightspace, and those are the documents you build from. They give exact byte layouts, exact JSON field names, cost formulas, and worked examples with numbers your implementation must reproduce.</p>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<tbody>
+<tr>
+<td style="width: 60px;padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M1</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><em>Storage Engine and Buffer Pool.</em> Page and record formats to the byte, heap file operations, both replacement policies with a trace you must reproduce exactly.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M2</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><em>Execution Engine.</em> Every operator with its semantics, its memory allowance, its cost formula and its counter rules. Worked examples for the external sort and for duplicate join keys.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M3</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><em>SQL Front End.</em> The grammar, name resolution rules, bag semantics, and seven translation examples showing the plan each SQL construct must produce.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M4</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><em>Query Optimizer.</em> Statistics, selectivity formulas, seven rewrite rules with their preconditions, the cost model, and a dynamic programming table worked through by hand.</td>
+</tr>
+</tbody>
+</table>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Where this handout and a module document disagree, the module document is correct. Read the one for your current checkpoint before you write any code for it.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">1.2&nbsp;&nbsp;Who can take this on</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">You must have completed Bonus Project 1 and submitted it. There is no reference implementation and no alternative entry point. This is not a formality. Your relational algebra engine is the logical layer of the system you are about to build, and three of the four modules reach into it. Work is individual, as it was for Bonus Project 1. You may discuss approaches with other students and you may use AI, but the code and the documents are yours alone.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">If you did not do Bonus Project 1, this project is closed to you. Spend the time on the regular final project instead.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">1.3&nbsp;&nbsp;Week one, prepare your engine</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Before Module 1 starts, spend the first week turning your Bonus Project 1 code into something the rest of the system can use. It was written as a standalone program. It now has to be a library that three other modules call. This is unglamorous work and it is the cheapest week of the project to get right.</p>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<tbody>
+<tr>
+<td style="width: 30px;padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">1</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Separate the layers. The tokenizer, the parser, the tree and the operators must be four things that can be imported independently. Nothing in them may print to the screen or read a file directly. A library that writes to standard output is unusable inside a query engine.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">2</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Expose the condition parser on its own. Modules 2, 3 and 4 all need to parse a condition string such as <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">R.b = S.b</code> into a tree and evaluate it against a tuple. That is the single most reused piece of code you already own.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">3</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Support qualified names everywhere. Every column reference in this project is <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">table.column</code>. If your Bonus 1 engine only half handled qualification, fix it now rather than in Module 3.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">4</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Serialise the tree. Your plan tree must be writable as JSON and readable back, because JSON is the contract between every pair of modules. Write the two functions and a test that round-trips every node type.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">5</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Detach the operators from their data source. In Bonus 1 your operators read relations held in memory. They must now pull tuples from something you pass in. You do not need the iterator interface yet, Module 2 defines it, but the dependency on in-memory lists has to go.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">6</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Move from sets to bags. Bonus 1 removed duplicates inside projection, because relational algebra is defined on sets. SQL is not. Projection must now keep duplicates and duplicate removal becomes a separate operator. Module 3 explains why in detail.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">7</td>
+<td style="padding: 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Keep the test suite. All twenty five Bonus 1 cases must still pass after the refactor, except the ones that changed meaning under point 6. Say in your log which ones changed and why.</td>
+</tr>
+</tbody>
+</table>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">This work is graded as part of the Module 1 checkpoint.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">1.4&nbsp;&nbsp;Conventions that hold across all four modules</h3>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<tbody>
+<tr>
+<td style="width: 160px;padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;font-weight: bold;">Page size</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">4096 bytes, fixed. Everything is measured in pages.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;font-weight: bold;">Types</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">INT</code> (4 bytes, signed) and <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">VARCHAR(n)</code> with n up to 255. No NULL values anywhere in this project.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;font-weight: bold;">Memory budget</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Every tool takes <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">--frames B</code>. Your system may hold at most B pages in memory at any moment. Exceeding it is a correctness failure, not a performance one.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;font-weight: bold;">Counters</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Every tool takes <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">--json</code> and emits page reads, page writes, and per-operator tuple counts. These numbers are how each module is graded.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;font-weight: bold;">Libraries</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">No database engines, no pandas, no parser generators, no regular expressions in any lexer or parser. A JSON library is allowed. A plotting library is allowed in reports. Your language's standard sort is allowed for sorting a single in-memory run, but not for the external sort as a whole.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;font-weight: bold;">Determinism</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Given the same data, the same plan and the same B, your counters must be identical across runs. If they are not, something in your system is not under your control.</td>
+</tr>
+</tbody>
+</table>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">2</span>&nbsp;&nbsp;Module 1. Storage engine and buffer pool</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Everything above this module eventually asks it for a page. It is the only code in the system permitted to touch a file.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">2.1&nbsp;&nbsp;What you build</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">A disk manager that reads and writes fixed 4 KB pages by page id and counts every read and write. A slotted page layout that stores variable length records, with a slot directory growing from the front and record data from the back. A heap file built from those pages, with a free space directory so that an insert does not scan every page. A buffer pool with a fixed number of frames, pinning, dirty tracking and a replacement policy. A catalog, itself stored in pages, holding table names, schemas and the first page of each heap file. A bulk loader that reads a CSV file into a table.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Two replacement policies, LRU and CLOCK, selectable at startup. You will be asked to explain where each one fails.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">2.2&nbsp;&nbsp;The contract</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Names may differ in your language. Behaviour may not.</p>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">DiskManager
+  read_page(page_id) -&gt; 4096 bytes          // counts one read
+  write_page(page_id, bytes)                // counts one write
+  allocate_page() -&gt; page_id
+  num_pages() -&gt; int
+
+BufferPool(frames B, policy)
+  fetch_page(page_id) -&gt; page               // pins it
+  unpin_page(page_id, is_dirty)
+  new_page() -&gt; page                        // pinned
+  flush_all()
+  stats() -&gt; { hits, misses, evictions, reads, writes }
+  // evicting a pinned page is an error, not a silent choice
+
+HeapFile(table)
+  insert(tuple) -&gt; rid                      // rid = (page_id, slot)
+  get(rid) -&gt; tuple
+  delete(rid)
+  scan() -&gt; iterator of (rid, tuple)        // one page pinned at a time
+
+Catalog
+  create_table(name, schema)
+  get_table(name) -&gt; { schema, first_page, num_pages, num_tuples }
+  list_tables()</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The scan constraint matters. A scan holds one page pinned at a time, not the whole file. A scan that materialises the table into a list defeats the entire module and will be visible in your counters.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">2.3&nbsp;&nbsp;How it runs standalone</h3>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">storage create-table --name R --schema "a:INT,b:VARCHAR(20),c:INT"
+storage load        --table R --file r.csv
+storage scan        --table R --limit 20 --frames 8 --json
+storage layout      --table R --page 3          // dumps slots and offsets
+storage trace       --file trace.txt --frames 16 --policy lru --json</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">trace</code> command is how I grade your buffer pool. A trace file holds one page id per line. Your pool processes them in order and prints hits, misses, evictions and writes as JSON. I supply the traces. Three of them are published with this handout, and two are not.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">layout</code> command prints the raw structure of one page, slot by slot, with byte offsets. It must agree with the diagram in your design document.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">2.4&nbsp;&nbsp;Required measurements</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Compute by hand how many records of a given schema fit on one 4 KB page under your layout, then load data and measure it. Explain any gap between the two numbers. Repeat for a schema with a long VARCHAR and for one with only INT columns.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Run all five traces under both policies at four pool sizes and report hit rates in one table. One of the published traces is a repeated sequential scan of a file larger than the pool. Report what LRU does there, explain why, and say which policy you would ship.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">2.5&nbsp;&nbsp;Deliverables</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Working code behind the five commands above. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">DESIGN_M1.md</code> with a byte-level diagram of your page header, slot directory and record format, plus your free space strategy and your reasoning. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">REPORT_M1.md</code> with the two measurement tables. Tests, including a test that evicting a pinned page fails.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">3</span>&nbsp;&nbsp;Module 2. Execution engine</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">This module takes a physical plan and runs it against the storage engine, inside a memory budget it is not allowed to exceed. It is the largest of the four.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">3.1&nbsp;&nbsp;What you build</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Every operator implements the same three method interface, and a plan is a tree of them. Calling <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">next</code> on the root pulls one tuple through the whole tree. Nothing materialises a full intermediate result unless the operator genuinely requires it, which is true only for sort and for the build side of a hash join.</p>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<thead>
+<tr>
+<th style="width: 170px;text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">Operator</th>
+<th style="text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 0 6px 0;">Requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">seqscan</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Streams a heap file one page at a time through the buffer pool.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">filter</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">project</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Fully pipelined. Constant memory.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">sort</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">External merge sort. Sorts input larger than B pages by writing runs to disk and merging them. Must work when the input is twenty times B.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">distinct</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">group_by</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Both a sort-based and a hash-based implementation. Aggregates COUNT, SUM, AVG, MIN, MAX.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">nested_loop_join</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Block nested loop. Reads the outer in blocks of B minus 2 pages.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">sort_merge_join</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Built on your external sort. Must handle duplicate join keys on both sides correctly.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">hash_join</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Grace hash join. Partitions both inputs to disk, then joins partition by partition. Must detect a partition that still exceeds B and do something defensible.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">union</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">intersect</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">except</code></td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Bag and set versions of each.</td>
+</tr>
+</tbody>
+</table>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">3.2&nbsp;&nbsp;The contract</h3>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">Operator
+  open()
+  next() -&gt; tuple, or end-of-stream
+  close()
+  counters() -&gt; { tuples_out, comparisons, page_reads, page_writes }</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">A physical plan arrives as JSON. This is the format, and it is the same format Module 4 produces.</p>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">{
+  "op": "hash_join",
+  "condition": "R.b = S.b",
+  "left":  { "op": "filter",
+             "condition": "R.a &gt; 500",
+             "child": { "op": "seqscan", "table": "R" } },
+  "right": { "op": "seqscan", "table": "S" }
+}</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Condition strings are parsed by the expression parser you already wrote in Bonus Project 1. The full JSON schema for every operator is published alongside this handout. Your executor must reject a plan that does not conform, with a message naming the offending node.</p>
+<p><strong>Plan validation and error reporting.</strong> A plan whose JSON is malformed or does not conform to the expected plan schema must be rejected before execution. Error messages must provide enough information to identify and fix the problem.</p>
+<p><span style="color: #990006;">For schema-validation errors, the message must identify the offending node (e.g., <code>sort</code>, <code>filter</code>, or <code>hash_join</code>) and describe the specific problem, such as a missing required field, an invalid field value, an unsupported operator, or an incorrectly structured field. For example:</span></p>
+<ul>
+<li style="color: #990006;">
+<p><span style="color: #990006;"><code>Node 'sort': missing required field 'keys'.</code></span></p>
+</li>
+<li style="color: #990006;">
+<p><span style="color: #990006;"><code>Node 'filter': field 'condition' must be a string.</code></span></p>
+</li>
+<li style="color: #990006;">
+<p><span style="color: #990006;"><code>Node 'join': unknown operator 'merge_join'.</code></span></p>
+</li>
+</ul>
+<p><span style="color: #990006;">For malformed JSON syntax, report the syntax error and its location when possible. The exact wording and output format are implementation-defined; the messages must be sufficiently specific to diagnose the error.</span></p>
+<p><span style="color: #990006;">A plan referring to an unknown table or column must be rejected at <code>open</code>, before any execution work begins.</span></p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">3.3&nbsp;&nbsp;How it runs standalone</h3>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">exec run   --plan plan.json --frames 32 --json
+exec trace --plan plan.json --frames 32        // per-operator counters</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">I will supply plan files and a dataset. Your output is checked for correct tuples, as a bag, and your counters are checked against what the algorithm named in the plan should cost.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">3.4&nbsp;&nbsp;Required measurements</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">For each of the three joins, measure page reads and writes across at least four values of B and three relation sizes, and put the measured numbers beside the textbook cost formula in one table. Block nested loop should cost M + ⌈M/(B−2)⌉·N page reads. Where your measurement differs, explain the difference. The explanation is worth more than the agreement.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Find the crossover point. For a fixed pair of relations, vary B and report which join algorithm is cheapest at each value. Then do the same varying relation size at fixed B. Plot both.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Measure the number of passes your external sort makes against ⌈log<sub>B−1</sub>(N/B)⌉ + 1 and report both.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Build a dataset where one join key value appears in a large fraction of the rows, run the hash join on it, and report what happened to your partitions and what your code did about it.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">3.5&nbsp;&nbsp;Deliverables</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Code behind both commands. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">DESIGN_M2.md</code> describing how each operator respects the memory budget, with the page accounting for sort and hash join written out. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">REPORT_M2.md</code> with the four measurements above. Tests including duplicate join keys, empty inputs and a join whose output is larger than either input.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">4</span>&nbsp;&nbsp;Module 3. SQL front end</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Bonus Project 1 turned relational algebra text into a tree. This module turns SQL into the same kind of tree, which is harder, because SQL does not say what order to do anything in.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">4.1&nbsp;&nbsp;The SQL subset</h3>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">CREATE TABLE name (col TYPE, ...)
+INSERT INTO name VALUES (...)
+SELECT [DISTINCT] select_list
+  FROM table_ref [, table_ref ...] | table_ref JOIN table_ref ON condition
+ [WHERE condition]
+ [GROUP BY cols [HAVING condition]]
+ [ORDER BY cols [ASC|DESC]]
+ [LIMIT n]
+query UNION [ALL] query | INTERSECT | EXCEPT</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Table references may carry an alias. A table reference may also be a parenthesised subquery with an alias. Aggregates are COUNT, SUM, AVG, MIN and MAX, including <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">COUNT(*)</code>.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">4.2&nbsp;&nbsp;What you build</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">A hand-written lexer and parser, under the same rules as Bonus Project 1. No regular expressions, no parser generators. A grammar document again, since SQL's grammar is considerably larger and the precedence questions are real.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Then a semantic analysis pass against the catalog, which resolves every column reference to exactly one table, expands <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">SELECT *</code>, type checks every comparison, and rejects an aggregate used outside an aggregating query. Then a translator that emits a logical plan.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The hard part is semantics, not syntax. SQL works on bags and your Bonus 1 algebra worked on sets. You must decide where duplicate elimination actually belongs, make UNION remove duplicates while UNION ALL does not, and be able to explain why <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">SELECT DISTINCT</code> is not free. This is the single most common place where a plausible looking implementation is silently wrong.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">4.3&nbsp;&nbsp;The contract</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Output is a logical plan in JSON. Logical operators are <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">scan</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">select</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">project</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">join</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">rename</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">group_by</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">distinct</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">sort</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">limit</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">union</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">intersect</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">except</code>. No physical choices appear here. A logical plan says join, never hash join.</p>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">sql parse   --query "SELECT ..." --explain        // prints the tree
+sql compile --file q.sql --catalog db/ --json     // logical plan JSON
+sql check   --file q.sql --catalog db/            // errors only</pre>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">4.4&nbsp;&nbsp;Cases that must work</h3>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<tbody>
+<tr>
+<td style="width: 30px;padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">1</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">A self join written with two aliases on the same table, translating into a rename.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">2</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">SELECT *</code> over a three table join where two tables share a column name.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">3</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">An unqualified column that exists in two tables. Must be rejected as ambiguous.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">4</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">UNION</code> against <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">UNION ALL</code> on the same inputs, producing different plans.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">5</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">A WHERE condition and a HAVING condition in one query, landing on opposite sides of the grouping.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">6</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">A non-aggregated column in the select list of a GROUP BY query. Must be rejected.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">7</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">A subquery in the FROM clause with an alias, joined to a base table.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">8</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">ORDER BY</code> on a column that is not in the select list.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">9</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Comparing an INT column to a string literal. Type error, as in Bonus Project 1.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">10</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">A query against a table that does not exist, and one against a column that does not exist. Different messages.</td>
+</tr>
+</tbody>
+</table>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">4.5&nbsp;&nbsp;Deliverables</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Code behind the three commands. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">GRAMMAR_SQL.md</code>, the EBNF for your subset with precedence and associativity, in the style of Bonus Project 1. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">DESIGN_M3.md</code> covering name resolution and your bag semantics decisions, with the place where duplicate elimination happens justified. Tests for all ten cases.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">5</span>&nbsp;&nbsp;Module 4. Query optimizer</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">A logical plan says what. A physical plan says how. This module chooses, and the choice is worth orders of magnitude.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">5.1&nbsp;&nbsp;What you build</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Statistics gathering, triggered by an <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">ANALYZE</code> command and stored in the catalog. Per table, row count and page count. Per column, number of distinct values, minimum, maximum, and an equi-depth histogram with a configurable bucket count.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Selectivity estimation for equality, range, conjunction and disjunction, and for a join. State your formulas and your assumptions in the design document, because you will be asked to show where they break.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Rule-based rewrites on the logical plan. Splitting conjunctions, pushing selections toward the leaves, pushing projections down, and removing a projection that discards nothing.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Then the cost-based part. A cost model counting page I/O as a function of B. Enumeration of join orders by dynamic programming over left-deep trees, for queries with up to six relations. For each join, a choice among your three algorithms. The output is a physical plan in the exact JSON that Module 2 consumes.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">5.2&nbsp;&nbsp;The contract</h3>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">opt analyze  --catalog db/ --table R --buckets 20
+opt plan     --logical logical.json --catalog db/ --frames 32 --json
+opt explain  --logical logical.json --catalog db/ --frames 32
+opt dp-table --logical logical.json --catalog db/   // the DP table, one row per subset</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Every node in an <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">explain</code> output carries its estimated row count and its estimated cost. This is what I read when grading, and it is what you read when your optimizer makes a decision you do not understand.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">5.3&nbsp;&nbsp;Required measurements</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">For the twenty supplied queries, report estimated against actual row count at every node, as a q-error, which is the larger of the two divided by the smaller. Give the median and the worst case. A median near 1 means your estimates are good. A worst case in the hundreds is normal and is the interesting part of the report.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">For each query, measure the I/O of your chosen plan against the plan you would get with no optimizer at all, meaning joins in the order written and one fixed algorithm. Report the ratio.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The supplied dataset contains two columns that are strongly correlated. Find a query where this makes your optimizer choose a bad plan. Show the estimate, show the actual, name the assumption that failed, and measure how much that plan cost you against the better one. This question is worth more than the rest of the module's report combined.</p>
+<h3 style="font-family: Georgia,serif;font-size: 17px;font-weight: bold;margin: 24px 0 8px;">5.4&nbsp;&nbsp;Deliverables</h3>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Code behind the four commands. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">DESIGN_M4.md</code> with your cost model, your selectivity formulas, your rewrite rules and your enumeration strategy, including why left-deep and what you lose by that restriction. <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">REPORT_M4.md</code> with the three measurements. The DP table for one four table join, printed in full.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">6</span>&nbsp;&nbsp;Integration</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">In the last two weeks the four modules become one program. A single binary with a prompt, where SQL goes in and rows come out.</p>
+<pre style="font-family: Consolas,monospace;font-size: 13px;line-height: 1.5;background: #f6f5f3;border-left: 3px solid #d6d2cc;padding: 12px 14px;margin: 0 0 16px;overflow-x: auto;">  SQL text
+     |
+     v
+  [ M3 ]  lexer -&gt; parser -&gt; semantic analysis -&gt; translation
+     |
+     |  logical plan
+     v
+  [ M4 ]  rewrites -&gt; statistics -&gt; cost model -&gt; join order -&gt; algorithm choice
+     |
+     |  physical plan
+     v
+  [ M2 ]  iterator tree, open / next / close, memory budget B
+     |
+     |  page requests
+     v
+  [ M1 ]  buffer pool -&gt; heap files -&gt; pages on disk
+                   ^
+                   |
+              catalog and statistics, read by M4</pre>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">The shell supports the SQL subset plus <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">EXPLAIN</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">EXPLAIN ANALYZE</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">ANALYZE table</code>, <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">SET frames = n</code>, and <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">LOAD table FROM file</code>. The four module command line tools must still work. Integration means wiring, not rewriting.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Seventy two hours before the demo I publish a dataset and twenty five queries you have not seen. You load the data, run the queries, and report for each one the result row count, the page I/O, the wall time, and the estimated against actual rows at the root. Correctness is checked by running the same queries on PostgreSQL over the same data on your OpenStack instance. Your system does not need to be fast. It needs to be right, and your numbers need to explain themselves.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;"><code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">ARCHITECTURE.md</code> describes the whole system, the interface between each pair of modules, and one page on what you would do differently if you started again.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">7</span>&nbsp;&nbsp;Checkpoints, grading and effort</h2>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<thead>
+<tr>
+<th style="text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">Checkpoint</th>
+<th style="width: 90px;text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">Weeks</th>
+<th style="width: 70px;text-align: right;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">Hours</th>
+<th style="width: 70px;text-align: right;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 0 6px 0;">Weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">Engine refactor and M1 storage engine</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">1 to 2</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">35</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">20</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">M2 Execution engine</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">3 to 5</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">50</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">25</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">M3 SQL front end</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">6 to 7</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">35</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">20</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">M4 Query optimizer</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">8 to 9</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">45</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">20</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">Integration, hidden workload, demo</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;">10</td>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">20</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;text-align: right;">15</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-top: 2px solid #1b1a18;font-weight: bold;">Total</td>
+<td style="padding: 8px 10px 8px 0;border-top: 2px solid #1b1a18;">&nbsp;</td>
+<td style="padding: 8px 10px 8px 0;border-top: 2px solid #1b1a18;text-align: right;font-weight: bold;">185</td>
+<td style="padding: 8px 0 8px 0;border-top: 2px solid #1b1a18;text-align: right;font-weight: bold;">100</td>
+</tr>
+</tbody>
+</table>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Hours are an estimate, not a promise. Each checkpoint is a tagged commit, the module's documents, and a fifteen minute oral check where I run your tool on my files and ask you to explain what happened. A module that fails its oral check scores zero for that checkpoint regardless of what the code does.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">A late module does not block the next one, because the contracts are published. If your executor is not finished, write the optimizer against the published physical plan schema and test it with my sample files.</p>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">8</span>&nbsp;&nbsp;Reading</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">You will not finish this project on intuition. Each checkpoint report must cite at least two sources and say what they changed in your design, and the oral check draws one question from the reading.</p>
+<table style="width: 100%;border-collapse: collapse;margin: 0 0 18px;font-family: Georgia,serif;font-size: 15px;line-height: 1.5;">
+<thead>
+<tr>
+<th style="width: 60px;text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 10px 6px 0;">Module</th>
+<th style="text-align: left;font-weight: bold;border-bottom: 2px solid #1b1a18;padding: 6px 0 6px 0;">Topics and sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M1</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Page and record formats, slotted pages, heap files, buffer pool design, replacement policies, sequential flooding. Ramakrishnan and Gehrke ch. 9. Silberschatz ch. 12 and 13. Petrov, <em>Database Internals</em>. O'Neil et al., <em>The LRU-K Page Replacement Algorithm</em>, SIGMOD 1993.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M2</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">The iterator model, pipelining versus materialisation, external merge sort, block nested loop, sort-merge and hash joins, partition overflow. Ramakrishnan and Gehrke ch. 12 to 14. Garcia-Molina, Ullman and Widom ch. 15. Graefe, <em>Volcano</em>, IEEE TKDE 1994. Shapiro, <em>Join Processing in Database Systems with Large Main Memories</em>, ACM TODS 1986.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M3</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">SQL grammar, name resolution, translating SQL to relational algebra, bag against set semantics. Ramakrishnan and Gehrke ch. 4 and 5. Garcia-Molina, Ullman and Widom ch. 16.1 and 16.2. Nystrom, <em>Crafting Interpreters</em>, for scaling a hand-written parser. The PostgreSQL documentation on SELECT.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">M4</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Algebraic equivalences, pushdown, catalog statistics, histograms, selectivity under uniformity and independence, cost models, dynamic programming over join orders, cardinality estimation error. Ramakrishnan and Gehrke ch. 15. Garcia-Molina, Ullman and Widom ch. 16. Selinger et al., <em>Access Path Selection</em>, SIGMOD 1979. Leis et al., <em>How Good Are Query Optimizers, Really?</em>, VLDB 2015.</td>
+</tr>
+<tr>
+<td style="padding: 8px 10px 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;color: #a6192e;font-weight: bold;">All</td>
+<td style="padding: 8px 0 8px 0;border-bottom: 1px solid #d6d2cc;vertical-align: top;">Hellerstein, Stonebraker and Hamilton, <em>Architecture of a Database System</em>. Free, short, and the right thing to read in week one. The CMU 15-445 lectures by Andy Pavlo cover every module above.</td>
+</tr>
+</tbody>
+</table>
+<h2 style="font-family: Georgia,serif;font-size: 21px;font-weight: bold;margin: 36px 0 12px;padding-top: 12px;border-top: 1px solid #1b1a18;"><span style="color: #a6192e;">9</span>&nbsp;&nbsp;Using AI on this project</h2>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Allowed, and you will use it. It will also mislead you more here than it did on Bonus Project 1, because the hard parts of this project are not code. They are the memory budget your sort has to respect, the statistics your optimizer trusts too much, and the fact that your four modules were written at four different times by people who had changed their minds in between.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">Each checkpoint carries a <code style="font-family: Consolas,monospace;font-size: 13px;background: #f2f1ef;padding: 1px 4px;">DESIGN_LOG.md</code> entry. What you tried, what broke, and at least two places per module where AI assistance gave you something wrong, slow or quietly incorrect, with how you found it. A log saying you asked and it worked scores zero.</p>
+<p style="margin: 0 0 14px;font-family: Georgia,serif;font-size: 16px;line-height: 1.6;">You are examined on every module, including the ones you finished weeks earlier. Code you cannot explain scores zero for that checkpoint whether or not it runs.</p>
+<p style="margin: 32px 0 0;padding-top: 14px;border-top: 1px solid #d6d2cc;font-family: Georgia,serif;font-size: 14px;line-height: 1.5;color: #4a4642;">COMP 3005 Database Management Systems, Fall 2026. Contracts, JSON schemas, sample plans and traces are published alongside this handout. Questions go to the discussion forum.</p>
+</div></div>

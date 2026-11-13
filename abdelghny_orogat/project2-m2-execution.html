@@ -1,0 +1,279 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html><head></head><body>
+
+
+
+
+
+
+
+
+
+<div style="max-width:780px;margin:0 auto;font:16px/1.6 Georgia,serif;color:#1b1a18;">
+
+<div style="border-bottom:3px solid #1b1a18;padding-bottom:16px;margin-bottom:28px;">
+<p style="margin:0 0 16px;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005 &#160;&#183;&#160; Fall 2026 &#160;&#183;&#160; Project 2 &#160;&#183;&#160; <span style="color:#1b1a18;font-weight:bold;">Module 2</span></p>
+<h1 style="margin:0 0 6px;font:bold 30px/1.15 Georgia,serif;">Execution Engine</h1>
+<p style="margin:0;font:italic 17px/1.4 Georgia,serif;color:#4a4642;">Iterators, external sorting, three join algorithms, one memory budget</p>
+</div>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">This module takes a physical plan and runs it against Module 1. Every operator in it obeys the same interface and the same memory rule. The rule is the hard part, and it is what separates this from the relational algebra engine you already wrote.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">1</span>&#160;&#160;Ground rules</h2>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">1.1&#160;&#160;The iterator interface</h3>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">open()                  prepare, acquire buffers, do any blocking work
+next() -&gt; tuple | END    produce the next output tuple
+close()                 release every buffer and temporary file
+counters() -&gt; { tuples_out, comparisons, page_reads, page_writes }</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Calling <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">next</code> on the root pulls one tuple through the whole tree. An operator calls <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">next</code> on its children, it never reaches past them, and it never asks the catalog or the disk for anything except through Module 1.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">After <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">close</code> every page the operator pinned is unpinned and every temporary file it created is deleted. A plan that finishes with pinned pages left over is a failure even if the tuples were right.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">1.2&#160;&#160;The memory budget</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The whole plan gets B frames. B is given by <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">--frames</code> and is as small as 4 during grading. An operator that needs working memory requests a number of frames at <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">open</code> and holds no more than that.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">How you divide B among the operators in a plan is your decision, and your design document must state the rule. A simple, defensible rule is to give every blocking operator an equal share and give pipelined operators one frame each. Whatever you choose, running the same plan at the same B must produce the same counters every time.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Holding more than B pages at any moment is a correctness failure. This includes holding tuples in a language level list or dictionary that is not counted against the budget. If a hash table holds 200,000 tuples while B is 8, the operator is wrong regardless of how fast it runs.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">1.3&#160;&#160;Tuples, schemas and comparisons</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A schema is an ordered list of qualified column names such as <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">R.a</code>, each with a type. Join output schema is the left schema followed by the right schema, unchanged. Two columns with the same qualified name in one schema is an error at <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">open</code>.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Comparison rules are the ones from Bonus Project 1. Same type only. INT against VARCHAR is an error, for every operator including equality. VARCHAR ordering is byte-wise on the UTF-8 encoding.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">1.4&#160;&#160;What the counters mean</h3>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:150px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">tuples_out</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Tuples this operator returned from <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">next</code>.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">comparisons</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Times this operator evaluated a condition or compared two keys, whether or not it matched. Each operator owns its own counter. A join that fuses its condition into its inner loop reports all of them on the join.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">page_reads</code>, <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">page_writes</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Disk manager calls attributed to this operator, including reads and writes of its own temporary files.</td></tr>
+</tbody>
+</table>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">2</span>&#160;&#160;The operators</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">In the cost formulas below, M is the number of pages of the left or outer input and N the number of pages of the right or inner input.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.1&#160;&#160;seqscan</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Returns every live tuple of a table in heap order. One data page pinned at a time. Frames 1. Cost M reads. Comparisons 0.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;seqscan&quot;, &quot;table&quot;: &quot;R&quot; }</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.2&#160;&#160;filter</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Evaluates a condition on each input tuple and passes through the ones that hold. Output schema is the input schema. Fully pipelined, frames 1, no I/O of its own. Comparisons increase by one per tuple examined, not per comparison operator inside a compound condition.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;filter&quot;, &quot;condition&quot;: &quot;R.a &gt; 500 and R.b = &#39;cs&#39;&quot;, &quot;child&quot;: { ... } }</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.3&#160;&#160;project</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Keeps the listed columns in the listed order. <strong>It does not remove duplicates.</strong> This is the single most important difference from Bonus Project 1, where projection was a set operation. Here the algebra is on bags and duplicate removal is a separate operator. Pipelined, frames 1.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;project&quot;, &quot;columns&quot;: [&quot;R.a&quot;,&quot;R.c&quot;], &quot;child&quot;: { ... } }</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.4&#160;&#160;distinct</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Removes duplicate tuples. Two implementations, selected by the plan. Sort based, which sorts the input and drops adjacent equals, costing what the sort costs. Hash based, which partitions to disk when the table of seen tuples exceeds its frames, then deduplicates partition by partition.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;distinct&quot;, &quot;mode&quot;: &quot;sort&quot; | &quot;hash&quot;, &quot;child&quot;: { ... } }</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.5&#160;&#160;sort</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">External merge sort. It must sort an input of 20 &#215; B pages, which means it cannot hold the input in memory and you cannot call your language&#39;s sort on the whole thing. You may call it on one run that already fits in memory.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">pass 0, run generation
+    fill B frames with input tuples, sort in memory, write one run to a temp file
+    repeat until input exhausted      -&gt; R0 = ceil(N / B) runs
+
+pass k, merging
+    merge B-1 runs at a time, 1 frame for output
+    repeat until one run remains
+
+the final pass does not write. It streams tuples to the parent through next().</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Number of passes is <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">1 + ceil(log(ceil(N/B)) / log(B-1))</code>. The sort is a blocking operator. Pass 0 and every merge pass except the last happen inside <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">open</code>.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Worked example.</strong> N = 8 pages, B = 3.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:90px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Pass</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">What happens</th>
+<th style="width:70px;text-align:right;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">reads</th>
+<th style="width:70px;text-align:right;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">writes</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">0</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">ceil(8/3) = 3 runs of 3, 3 and 2 pages</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">8</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">8</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">1</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">merge 2 of the 3 runs, carry the third, leaving 2 runs</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">6</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">6</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">2</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">merge the last 2 runs, streaming to the parent</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">8</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;">0</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;font-weight:bold;">Total</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">3 passes</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;text-align:right;font-weight:bold;">22</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;text-align:right;font-weight:bold;">14</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Carrying a run forward untouched rather than rewriting it is one valid strategy. If yours rewrites it instead, your numbers will be 8 and 8 on pass 1 and that is also acceptable. State which you do, because your measured totals must match your own description.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;sort&quot;, &quot;keys&quot;: [[&quot;R.a&quot;,&quot;asc&quot;],[&quot;R.b&quot;,&quot;desc&quot;]], &quot;child&quot;: { ... } }</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.6&#160;&#160;group_by</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Groups by zero or more columns and computes aggregates per group. Sort based and hash based implementations, selected by the plan, with the same output as bags in unspecified order.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Aggregates are COUNT, SUM, AVG, MIN, MAX. <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">COUNT(*)</code> counts tuples. SUM and AVG require INT. AVG returns a real number printed to four decimal places. MIN and MAX work on both types.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Two edge cases that are easy to get wrong. With no grouping columns and an empty input, the output is exactly one row, with COUNT 0 and the other aggregates undefined, which is an error if requested. With grouping columns and an empty input, the output is zero rows.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;group_by&quot;, &quot;mode&quot;: &quot;sort&quot; | &quot;hash&quot;,
+  &quot;keys&quot;: [&quot;R.dept&quot;],
+  &quot;aggregates&quot;: [[&quot;count&quot;,&quot;*&quot;],[&quot;avg&quot;,&quot;R.salary&quot;],[&quot;max&quot;,&quot;R.name&quot;]],
+  &quot;child&quot;: { ... } }
+
+output schema: R.dept, count_star, avg_R_salary, max_R_name</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.7&#160;&#160;nested_loop_join</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Block nested loop. Read B − 2 pages of the outer into memory, then stream the entire inner past it one page at a time, testing every pair. Repeat for each outer block. One frame for the inner page and one for output.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">cost        = M + ceil(M / (B-2)) * N        page reads
+comparisons = |R| * |S|                      tuples, not pages</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">The comparison count does not depend on B, on the condition, or on how many pairs match. You compare every pair because a match is unknown until you compare it. The page read count does depend on B, sharply. Your report will show both.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">This operator accepts any condition, not only equality, so it is the only join that can serve an inequality predicate.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;nested_loop_join&quot;, &quot;condition&quot;: &quot;R.b = S.b&quot;,
+  &quot;left&quot;: { ... }, &quot;right&quot;: { ... } }</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.8&#160;&#160;sort_merge_join</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Equality conditions only. Sort both inputs on the join key using your sort operator, then advance two cursors in step. Duplicate keys on both sides are where this algorithm is usually written wrong, so the handling is specified here.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">r = first of R, s = first of S
+while r and s:
+    if r.key &lt; s.key:  advance r
+    elif r.key &gt; s.key: advance s
+    else:
+        mark = position of s
+        for each r&#39; in the run of R with this key:
+            rewind s to mark
+            for each s&#39; in the run of S with this key:
+                emit (r&#39;, s&#39;)
+        advance r past its run, advance s past its run
+
+cost        = sort(M) + sort(N) + M + N
+comparisons = key comparisons in the merge, plus those inside the sorts</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Worked example.</strong> R.b = [1, 2, 2, 3] and S.b = [2, 2, 4]. The output has four rows, every pairing of the two 2s on the left with the two 2s on the right. If your implementation produces two rows, your cursor advanced instead of rewinding.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A run of equal keys may be larger than B. Say in your design document what you do about that. Spilling the inner run to a temporary file is acceptable. Assuming it fits is not.</p>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.9&#160;&#160;hash_join</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Equality conditions only. Grace hash join in two phases.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">partition phase
+    choose P = B - 1 output partitions
+    scan R, write each tuple to partition h1(key) mod P
+    scan S, write each tuple to partition h1(key) mod P
+    matching tuples are now guaranteed to share a partition number
+
+probe phase
+    for i in 0..P-1:
+        build an in-memory hash table on R_i using h2
+        scan S_i, probe, emit matches
+        discard the table
+
+cost = 2(M + N) partitioning + (M + N) probing = 3(M + N)</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Partition overflow is required behaviour, not an edge case. If R<sub>i</sub> is still larger than B − 1 pages, you must do one of the following, and say which in your design document. Partition R<sub>i</sub> and S<sub>i</sub> again with a different hash function, to a stated recursion depth. Or fall back to a block nested loop join on that one partition pair.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Neither choice is better. Both are defensible. Silently building a hash table larger than the budget is neither.</p>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">{ &quot;op&quot;: &quot;hash_join&quot;, &quot;condition&quot;: &quot;R.b = S.b&quot;,
+  &quot;left&quot;: { ... }, &quot;right&quot;: { ... } }        // left is the build side</pre>
+
+<h3 style="margin:22px 0 8px;font:bold 17px/1.4 Georgia,serif;">2.10&#160;&#160;Set operators</h3>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Both inputs must have the same number of columns with the same types, position by position. Column names may differ, and the output takes the left input&#39;s names.</p>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<tbody>
+<tr><td style="width:130px;padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">union_all</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Concatenation. Pipelined, one frame, no deduplication.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">union</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Concatenation followed by duplicate removal.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">intersect</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Set semantics. A tuple appears once in the output if it appears at least once on both sides.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">except</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Set semantics. A tuple appears once if it is on the left and not on the right.</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;"><code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">limit</code></td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;vertical-align:top;">Returns the first n tuples, then stops pulling from its child. Must actually stop.</td></tr>
+</tbody>
+</table>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">Intersect and except are blocking and must work when both inputs exceed memory, by sorting or by partitioning. Neither may read one side entirely into a hash set without respecting B.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">3</span>&#160;&#160;Memory summary</h2>
+
+<table style="width:100%;border-collapse:collapse;margin:0 0 18px;font:15px/1.5 Georgia,serif;">
+<thead><tr>
+<th style="width:180px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Operator</th>
+<th style="width:110px;text-align:left;border-bottom:2px solid #1b1a18;padding:6px 10px 6px 0;font-weight:bold;">Blocking</th>
+<th style="text-align:left;border-bottom:2px solid #1b1a18;padding:6px 0;font-weight:bold;">Frames it may hold</th>
+</tr></thead>
+<tbody>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">seqscan, filter, project, union_all, limit</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">no</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">1</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">sort, distinct, group_by, intersect, except</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">yes</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">its allocated share</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">nested_loop_join</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">no</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">B − 2 outer, 1 inner, 1 output</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">sort_merge_join</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">on open</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">its sorts, then 3 for the merge</td></tr>
+<tr><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">hash_join</td><td style="padding:8px 10px 8px 0;border-bottom:1px solid #d6d2cc;">on open</td><td style="padding:8px 0;border-bottom:1px solid #d6d2cc;">B − 1 partitions plus 1 input</td></tr>
+</tbody>
+</table>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">4</span>&#160;&#160;Running it</h2>
+
+<pre style="margin:0 0 16px;padding:12px 14px;background:#f6f5f3;border-left:3px solid #d6d2cc;overflow-x:auto;font:13px/1.5 Consolas,monospace;">exec run   --db DIR --plan plan.json --frames 32 --json
+exec trace --db DIR --plan plan.json --frames 32        // per operator counters
+
+run --json
+{ &quot;schema&quot;: [[&quot;R.a&quot;,&quot;INT&quot;],[&quot;S.c&quot;,&quot;VARCHAR&quot;,20]],
+  &quot;rows&quot;: [[42,&quot;bob&quot;]],
+  &quot;totals&quot;: {&quot;tuples_out&quot;:1,&quot;comparisons&quot;:4000,&quot;page_reads&quot;:120,&quot;page_writes&quot;:0} }
+
+trace output, one line per node, in plan order, indented by depth
+hash_join          tuples_out=1     comparisons=4000  reads=96  writes=48
+  seqscan R        tuples_out=200   comparisons=0     reads=24  writes=0
+  seqscan S        tuples_out=150   comparisons=0     reads=24  writes=0</pre>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;">A plan whose JSON does not conform must be rejected with a message naming the offending node and the problem. A plan referring to an unknown table or column is rejected at <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">open</code>, before any work happens.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">5</span>&#160;&#160;Required measurements</h2>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Cost against formula.</strong> For each of the three joins, at B = 4, 16, 64, 256 and three relation sizes, put measured page reads and writes beside the formula from Section 2. One table. Where measurement and formula disagree, explain the gap. The explanation earns more than the agreement does.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Sort passes.</strong> Measure the number of passes against <code style="font:13px Consolas,monospace;background:#f2f1ef;padding:1px 4px;">1 + ceil(log(ceil(N/B)) / log(B-1))</code> for at least six combinations of N and B, including one where N is 20 &#215; B.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Crossover.</strong> Fix two relations and vary B. Report which join is cheapest at each B, and plot all three. Then fix B and vary relation size and do the same. Name the point where the ranking changes and explain what causes it.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>Skew.</strong> Build a dataset where one join key value appears in 40 percent of the rows on both sides. Run the hash join. Report your partition sizes, what your overflow handling did, and what it cost compared to the uniform case.</p>
+
+<p style="margin:0 0 14px;font:16px/1.6 Georgia,serif;"><strong>The budget.</strong> Run one plan containing a sort of 20 &#215; B pages at B = 4 and show that it completes. State the largest number of frames your implementation held at once, and how you know.</p>
+
+<h2 style="margin:34px 0 12px;padding-top:12px;border-top:1px solid #1b1a18;font:bold 21px/1.3 Georgia,serif;"><span style="color:#a6192e;">6</span>&#160;&#160;Checklist before submitting</h2>
+
+<ul style="margin:0 0 16px;padding-left:22px;">
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">The sort example in 2.5 reproduces, or your own documented variant does.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">The duplicate key example in 2.8 returns four rows.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">All three joins on the same inputs return the same bag of tuples.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Block nested loop reports exactly |R| &#215; |S| comparisons.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">Every plan runs at B = 4.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">A join whose output is larger than both inputs completes.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">An empty input through every operator returns cleanly, including group_by.</li>
+<li style="margin-bottom:6px;font:16px/1.6 Georgia,serif;">After any plan finishes, the buffer pool has no pinned frames and no temporary files remain.</li>
+</ul>
+
+<p style="margin:30px 0 0;padding-top:14px;border-top:1px solid #d6d2cc;font:14px/1.5 Georgia,serif;color:#4a4642;">COMP 3005, Project 2, Module 2. The full plan JSON schema and sample plans are published alongside this document.</p>
+
+</div>
+
+</body></html>
