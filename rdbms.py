@@ -215,6 +215,10 @@ relational_algebra_grammar:grammartype = {
     
 }
 
+sql_grammar:grammartype = {
+
+}
+
 
 from typing import Any
 
@@ -1534,3 +1538,20 @@ def parse_to_ast(document):
     ast = RelationalTreeReducer().ast(parse_tree)
 
     return ast
+
+from pprint import pprint
+
+if __name__ == "__main__" :
+
+    document = "SELECT col1, col2 FROM table WHERE col1 = 4;"
+
+    tokens = list(tokenizer(document))
+
+    pprint(tokens)
+
+    # recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
+    # recognizer.earley_recognize()
+
+    # parser = Parser(items = recognizer.state_sets, document=recognizer.document)
+    # parse_tree = parser.create_tree()
+

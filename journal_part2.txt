@@ -17,3 +17,6 @@ So like, high level, text from the repl -> sql parse tree -> sql AST -> relation
 
 Do I want to support indexes? The assignment says nothing about indexing or b trees so I think i'll write my implementation without indexes and maybe try to add them if I have time...
 
+
+
+At this point, I think i'm ready to work on the SQL parser. I want to write everything in a single file again, this time called rdbms.py
