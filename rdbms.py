@@ -471,8 +471,7 @@ sql_grammar:grammartype = {
     "join_clause": [
         ["join_operator", "table_or_subquery", "join_condition"],
         ["join_operator", "table_or_subquery", "join_condition", "join_clause"],
-        [special_char(','), "table_or_subquery"],
-        [special_char(','), "table_or_subquery", "join_clause"]
+        [special_char(','), "table_or_subquery"]
     ],
     "table_or_subquery": [
         [identifier],
@@ -561,6 +560,235 @@ check_grammar(sql_grammar)
 
 
 from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+@dataclass
+class Table:
+
+    @dataclass
+    class ColDef:
+        name: str
+        type: Literal["int"] | tuple[Literal["varchar"], int]
+
+    name: str
+    schema: list[ColDef]
+
+    def blocks(self) -> Generator[list[tuple]]:
+        raise NotImplementedError()
+
+    @staticmethod
+    def get_tables(names:list[str]):
+        return [Table.get_table(n) for n in names]
+
+    @staticmethod
+    def get_table(name:str):
+        # TODO
+        return {
+            
+        }[name]
+
+    @staticmethod
+    def create_table(name:str, schema):
+        pass
+
+class ASTContext:
+
+    sql_context = ContextVar('sql_context', default={})
+
+    @contextmanager
+    @staticmethod
+    def sql_table_in_scope():
+        with 
+    
+
+class Expr:
+
+    class ScalarExpression:
+        def eval(self, *a, **kwa) -> int | float | str:
+            raise NotImplementedError()
+        
+        def typecheck(self) -> Any:
+            pass
+
+    class BooleanExpression:
+        def eval(self, *a, **kwa) -> bool:
+            raise NotImplementedError()
+
+    @dataclass
+    class BinaryScalarExpression(ScalarExpression):
+        left:Expr.ScalarExpression
+        right:Expr.ScalarExpression
+
+        allowed_types = [int, float]
+        verb:str = ''
+        def operation(self, x, y) -> int | float | str : raise NotImplementedError()
+
+        def eval(self, *a, **kwa) -> int | float | str:
+            left = self.left.eval(*a, **kwa)
+            right = self.right.eval(*a, **kwa)
+                        
+            return self.operation(
+                self.left.eval(*a, **kwa),
+                self.right.eval(*a, **kwa)
+            )
+
+        def typecheck(self) -> Any:
+            left = self.left.typecheck()
+            right = self.right.typecheck()
+
+            assert left == right, f"cannot {self.verb} {left} and {right}"
+            assert left in self.allowed_types, f"cannot {self.verb} {left}"
+            return left
+
+    class Add(BinaryScalarExpression):
+        operation = lambda self, x, y : x+y
+        verb = 'add'
+        allowed_types = [int, float, str]
+            
+    class Subtract(BinaryScalarExpression):
+        operation = lambda self, x, y : x-y
+        verb = 'subtract'
+    class Multiply(BinaryScalarExpression):
+        operation = lambda self, x, y : x*y
+        verb = 'multiply'
+    class Divide(BinaryScalarExpression):
+        operation = lambda self, x, y : x/y
+        verb = 'divide'
+
+    @dataclass
+    class Unm(ScalarExpression):
+        arg:Expr.ScalarExpression
+        def eval(self, *a, **kwa) -> int | float | str:
+            arg = self.arg.eval(*a, **kwa)
+            if not (isinstance(arg, int) or isinstance(arg, float)) :
+                raise TypeError(f'Cannot negate a {type(arg)}')
+            return -arg
+
+    @dataclass
+    class BinaryCondition(BooleanExpression):
+        left: Expr.ScalarExpression
+        right: Expr.ScalarExpression
+
+        def operation(self, x, y) -> bool: raise NotImplementedError()
+
+        def eval(self, *a, **kwa) -> bool:
+            left = self.left.eval(*a, **kwa)
+            right = self.right.eval(*a, **kwa)
+            self.counter += 1
+            return self.operation(
+                left, right 
+            )
+
+    class Eq(BinaryCondition):
+        operation = lambda self, x, y : x == y
+    class Less(BinaryCondition):
+        operation = lambda self, x, y : x < y
+    class Leq(BinaryCondition):
+        operation = lambda self, x, y : x <= y
+
+    @dataclass
+    class BinaryBooleanExpression(BooleanExpression):
+        left: Expr.BooleanExpression
+        right: Expr.BooleanExpression
+
+        def operation(self, x, y) -> bool: raise NotImplementedError()
+
+        def eval(self, *a, **kwa) -> bool:
+            return self.operation(
+                self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
+            )
+
+    class And(BinaryBooleanExpression):
+        operation = lambda self, x, y : x and y
+    class Or(BinaryBooleanExpression):
+        operation = lambda self, x, y : x or y
+
+    @dataclass
+    class Not(BooleanExpression):
+        operand: Expr.BooleanExpression
+
+        def eval(self, *a, **kwa) -> bool:
+            return not self.operand.eval(*a, **kwa)
+
+    class AggregateFunction:
+        def send(self, tuple) -> None:
+            raise NotImplementedError()
+        def flush(self) -> str | int:
+            raise NotImplementedError()
+    
+    @dataclass
+    class ScalarLiteral(ScalarExpression):
+        val: str | float | int
+        def eval(self, *a, **kwa) -> int | float | str:
+            return self.val
+
+    @dataclass
+    class BooleanLiteral(BooleanExpression):
+        val: bool
+        def eval(self, *a, **kwa) -> bool:
+            return self.val
+
+class SQL:
+
+    class SQLNode:
+        def typecheck(self) -> Any:
+            raise NotImplementedError()
+
+    class Select(SQLNode):
+        distinct: bool
+        items: list[Item]
+        from_table: SQL.TableName | SQL.Subquery | None
+        from_joins: list[SQL.Join] | None
+
+
+        @dataclass
+        class Item:
+            value: Expr.ScalarExpression
+            rename: str | None
+
+        def typecheck(self) -> list[Table.ColDef]:
+            pass
+        
+
+
+    class Subquery(SQLNode):
+        select: SQL.Select
+        rename: str
+
+        def typecheck(self) -> Table:
+            return Table(
+                self.rename,
+                self.select.typecheck()
+            )
+
+
+    class Insert(SQLNode):
+        pass
+    class CreateTable(SQLNode):
+        pass
+
+    class Attribute(Expr.ScalarExpression):
+        table: str | None
+        col: str
+
+    class TableName(SQLNode):
+        name: str
+
+
+    class Join(SQLNode):
+        joinee: SQL.Select | SQL.TableName
+        opname: Literal["INNER"] | Literal["LEFT"] | Literal["CROSS"]
+        on: Expr.BooleanExpression
+
+        def typecheck(self) -> Any:
+            assert self.on.typecheck() == bool
+
+    # natural inner join
+    class CommaJoin(SQLNode):
+        joinee: SQL.Select | SQL.TableName
+
+        
 
 @dataclass
 class Relation:
@@ -613,17 +841,10 @@ class AlgebraNode:
     def eval(self, bound_tuples:list[BoundTuple], known_relations:dict[str, Relation]) -> Any:
         raise NotImplementedError()
 
-class ScalarExpression(AlgebraNode):
-    def eval(self, *a, **kwa) -> int | float | str:
-        raise NotImplementedError()
-
-class BooleanExpression(AlgebraNode):
-    def eval(self, *a, **kwa) -> bool:
-        raise NotImplementedError()
-
 class RelationExpression(AlgebraNode):
     def eval(self, *a, **kwa) -> Relation:
         raise NotImplementedError()
+
 
 from itertools import chain
 
@@ -705,17 +926,7 @@ class NamedRelation(RelationExpression):
         except KeyError as e :
             raise NameError(f'Not a known relation: {self.relation_name}')
 
-@dataclass
-class ScalarLiteral(ScalarExpression):
-    val: str | float | int
-    def eval(self, *a, **kwa) -> int | float | str:
-        return self.val
 
-@dataclass
-class BooleanLiteral(BooleanExpression):
-    val: bool
-    def eval(self, *a, **kwa) -> bool:
-        return self.val
 
 @dataclass
 class UnaryRelational(RelationExpression):
@@ -782,23 +993,23 @@ def compute(self:Compute, r:Relation) -> Relation:
         ]
     )
 
-@dataclass
-class Project(UnaryRelational):
-    columns: list[str]
-    operation = project
+# @dataclass
+# class Project(UnaryRelational):
+#     columns: list[str]
+#     operation = project
 
-@dataclass
-class Select(UnaryRelational):
-    predicate: BooleanExpression
-    operation = select
-@dataclass
-class Rename(UnaryRelational):
-    renames: dict[str, str]
-    operation = rename
-@dataclass
-class Compute(UnaryRelational):
-    computes: list[tuple[AlgebraNode, str]]
-    operation = compute
+# @dataclass
+# class Select(UnaryRelational):
+#     predicate: BooleanExpression
+#     operation = select
+# @dataclass
+# class Rename(UnaryRelational):
+#     renames: dict[str, str]
+#     operation = rename
+# @dataclass
+# class Compute(UnaryRelational):
+#     computes: list[tuple[AlgebraNode, str]]
+#     operation = compute
 
 
 @dataclass
@@ -1077,98 +1288,6 @@ class GenericJoin(BinaryRelationalExpression):
     jointype:JoinSpecification
     operation = join
 
-
-@dataclass
-class BinaryScalarExpression(ScalarExpression):
-    left:ScalarExpression
-    right:ScalarExpression
-
-    allowed_types = [int, float]
-    verb:str = ''
-    def operation(self, x, y) -> int | float | str : raise NotImplementedError()
-
-    def eval(self, *a, **kwa) -> int | float | str:
-        left = self.left.eval(*a, **kwa)
-        right = self.right.eval(*a, **kwa)
-        
-        if not self.is_allowed_type(left) :
-            raise TypeError(f'Cannot {self.verb} a {type(left)}')
-        if not self.is_allowed_type(right) :
-            raise TypeError(f'Cannot {self.verb} a {type(right)}')
-        
-        return self.operation(
-            self.left.eval(*a, **kwa),
-            self.right.eval(*a, **kwa)
-        )
-
-class Add(BinaryScalarExpression):
-    operation = lambda self, x, y : x+y
-    verb = 'add'
-    allowed_types = [int, float, str]
-class Subtract(BinaryScalarExpression):
-    operation = lambda self, x, y : x-y
-    verb = 'subtract'
-class Multiply(BinaryScalarExpression):
-    operation = lambda self, x, y : x*y
-    verb = 'multiply'
-class Divide(BinaryScalarExpression):
-    operation = lambda self, x, y : x/y
-    verb = 'divide'
-
-@dataclass
-class Unm(ScalarExpression):
-    arg:ScalarExpression
-    def eval(self, *a, **kwa) -> int | float | str:
-        arg = self.arg.eval(*a, **kwa)
-        if not (isinstance(arg, int) or isinstance(arg, float)) :
-            raise TypeError(f'Cannot negate a {type(arg)}')
-        return -arg
-
-@dataclass
-class BinaryCondition(BooleanExpression):
-    left: ScalarExpression
-    right: ScalarExpression
-
-    def operation(self, x, y) -> bool: raise NotImplementedError()
-
-    def eval(self, *a, **kwa) -> bool:
-        left = self.left.eval(*a, **kwa)
-        right = self.right.eval(*a, **kwa)
-        self.counter += 1
-        return self.operation(
-            left, right 
-        )
-
-class Eq(BinaryCondition):
-    operation = lambda self, x, y : x == y
-class Less(BinaryCondition):
-    operation = lambda self, x, y : x < y
-class Leq(BinaryCondition):
-    operation = lambda self, x, y : x <= y
-
-@dataclass
-class BinaryBooleanExpression(BooleanExpression):
-    left: BooleanExpression
-    right: BooleanExpression
-
-    def operation(self, x, y) -> bool: raise NotImplementedError()
-
-    def eval(self, *a, **kwa) -> bool:
-        return self.operation(
-            self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
-        )
-
-class And(BinaryBooleanExpression):
-    operation = lambda self, x, y : x and y
-class Or(BinaryBooleanExpression):
-    operation = lambda self, x, y : x or y
-
-@dataclass
-class Not(BooleanExpression):
-    operand: BooleanExpression
-
-    def eval(self, *a, **kwa) -> bool:
-        return not self.operand.eval(*a, **kwa)
 
 
 
