@@ -297,16 +297,16 @@ sql_expression_grammar:grammartype = {
         ["disjunct"]
     ],
     "disjunct":[
-        ["conjunct", literal_identifier('or'), "disjunct"],
+        ["conjunct", sql_keyword('or'), "disjunct"],
         ["conjunct"]
     ],
     "conjunct":[
-        ["not", literal_identifier('and'), "conjunct"],
+        ["not", sql_keyword('and'), "conjunct"],
         ["not"]
     ],
     "not": [
         ["boolean_factor"],
-        [literal_identifier('not'), "boolean_factor",]
+        [sql_keyword('not'), "boolean_factor",]
     ],
     "boolean_factor": [
         [special_char('('), "boolean_expression", special_char(')')],
@@ -322,8 +322,8 @@ sql_expression_grammar:grammartype = {
     ],
 
     "boolean_literal": [
-        [literal_identifier("true")],
-        [literal_identifier("false")]
+        [sql_keyword("true")],
+        [sql_keyword("false")]
     ],
 
     "scalar": [
@@ -333,16 +333,17 @@ sql_expression_grammar:grammartype = {
 
     "scalar_expression": [
         ["numeric_expression"],
+        ["aggregate"],
         [string_literal],
-        ["aggregate_function", special_char('('), "scalar_expression", special_char(')')],
-        [sql_keyword("COUNT"), special_char('('), special_char('*'), special_char(')')],
     ],
 
-    "aggregate_function": [
-        [sql_keyword('COUNT')],
-        [sql_keyword('AVG')],
-        [sql_keyword('MIN')],
-        [sql_keyword('MAX')],
+    "aggregate": [
+        [sql_keyword("COUNT"), special_char('('), special_char('*'), special_char(')')],
+        [sql_keyword("COUNT"), special_char('('), "boolean_expression", special_char(')')],
+        [sql_keyword("COUNT"), special_char('('), "scalar_expression", special_char(')')],
+        [sql_keyword("AVG"), special_char('('), "numeric_expression", special_char(')')],
+        [sql_keyword("MIN"), special_char('('), "scalar_expression", special_char(')')],
+        [sql_keyword("MAX"), special_char('('), "scalar_expression", special_char(')')],
     ],
 
     "numeric_expression": [
@@ -485,16 +486,16 @@ sql_grammar:grammartype = {
         [sql_keyword('CROSS'), sql_keyword('JOIN')]
     ],
     "join_condition": [
-        [sql_keyword('ON'), "condition"],
+        [sql_keyword('ON'), "boolean_expression"],
         [sql_keyword('USING'), "identifier_list"],
     ],
 
-    "where": [[sql_keyword('WHERE'), "condition"]],
+    "where": [[sql_keyword('WHERE'), "boolean_expression"]],
     "groupby": [
         [sql_keyword('GROUP'), sql_keyword('BY'), "attribute_list"]
     ],
 
-    "having": [[sql_keyword('HAVING'), "condition"]],
+    "having": [[sql_keyword('HAVING'), "boolean_expression"]],
 
     "orderby": [[sql_keyword('ORDER'), sql_keyword('BY'), "scalar_expression_list"]],
     "limit": [[sql_keyword('LIMIT'), "number"]],
@@ -592,15 +593,21 @@ class Table:
     def create_table(name:str, schema):
         pass
 
-class ASTContext:
+class SQLContext:
 
-    sql_context = ContextVar('sql_context', default={})
+    tables:ContextVar[list[Table]] = ContextVar('sql_context_tables', default=[])
+    is_aggregate:ContextVar[bool] = ContextVar('sql_is_aggregate', default=False)
 
     @contextmanager
     @staticmethod
-    def sql_table_in_scope():
-        with 
+    def sql_table_in_scope(*tables: Table):
+        with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
+            yield
+
     
+    
+def is_any(inst, *types) -> bool :
+    return any(isinstance(int, t) for t in types)
 
 class Expr:
 
@@ -731,12 +738,6 @@ class Expr:
             assert t == bool, "how did this happen gerbert"
             return bool
     
-    class AggregateFunction:
-        def send(self, tuple) -> None:
-            raise NotImplementedError()
-        def flush(self) -> str | int:
-            raise NotImplementedError()
-    
     @dataclass
     class ScalarLiteral(ScalarExpression):
         val: str | float | int
@@ -755,8 +756,48 @@ class Expr:
         def typecheck(self) -> type[bool]:
             return bool
 
+    @dataclass
+    class AggregateFunction():
+        operand: Any
+        def send(self, tuple) -> None:
+            raise NotImplementedError()
+        def flush(self) -> str | int:
+            raise NotImplementedError()
+    
+    class Max(AggregateFunction):
+        operand: Expr.ScalarExpression
+        def typecheck(self):
+            t = self.operand.typecheck()
+            assert t in [int, float, str]
+            return t
+        
+        
+    class Min(AggregateFunction):
+        operand: Expr.ScalarExpression
+        def typecheck(self):
+            t = self.operand.typecheck()
+            assert t in [int, float, str]
+            return t
+
+    class Avg(AggregateFunction):
+        operand: Expr.ScalarExpression
+        def typecheck(self):
+            t = self.operand.typecheck()
+            assert t in [int, float]
+            return float
+
+    @dataclass
+    class Count(AggregateFunction):
+        operand: Expr.BooleanExpression | Expr.ScalarExpression | Literal['*']
+        def typecheck(self):
+            if self.operand == '*' : return int
+            t = self.operand.typecheck()
+            assert t in [int, ]
+            return int
+
 class SQL:
 
+    @dataclass
     class SQLNode:
         def typecheck(self) -> Any:
             raise NotImplementedError()
@@ -774,10 +815,9 @@ class SQL:
             rename: str | None
 
         def typecheck(self) -> list[Table.ColDef]:
+            # TODO check for ambiguity in self joins i.e. table names unique
             pass
         
-
-
     class Subquery(SQLNode):
         select: SQL.Select
         rename: str
@@ -787,21 +827,6 @@ class SQL:
                 self.rename,
                 self.select.typecheck()
             )
-
-
-    class Insert(SQLNode):
-        pass
-    class CreateTable(SQLNode):
-        pass
-
-    class Attribute(Expr.ScalarExpression):
-        table: str | None
-        col: str
-
-    class TableName(SQLNode):
-        name: str
-
-
     class Join(SQLNode):
         joinee: SQL.Select | SQL.TableName
         opname: Literal["INNER"] | Literal["LEFT"] | Literal["CROSS"]
@@ -813,6 +838,22 @@ class SQL:
     # natural inner join
     class CommaJoin(SQLNode):
         joinee: SQL.Select | SQL.TableName
+
+    class Insert(SQLNode):
+        pass
+    class CreateTable(SQLNode):
+        pass
+
+
+    
+    @dataclass
+    class Attribute(Expr.ScalarExpression):
+        col: str
+        table: str | None = None
+
+    class TableName(SQLNode):
+        name: str
+
 
         
 
@@ -893,131 +934,131 @@ def match_attribute_name_to_tuples(attribute_name:str, bound_tuples:list[BoundTu
 
     return list(iter_matches())
 
-@dataclass
-class NamedAttribute(ScalarExpression):
-    attribute_name: str
+# @dataclass
+# class NamedAttribute(ScalarExpression):
+#     attribute_name: str
 
-    _index_cache: tuple[int, int] | None = None
+#     _index_cache: tuple[int, int] | None = None
 
-    def use_cache(self, bound_tuples:list[BoundTuple]):
-        assert self._index_cache
+#     def use_cache(self, bound_tuples:list[BoundTuple]):
+#         assert self._index_cache
 
-        i, j = self._index_cache
+#         i, j = self._index_cache
 
-        assert i < len(bound_tuples)
-        assert j < len(bound_tuples[i].data)
+#         assert i < len(bound_tuples)
+#         assert j < len(bound_tuples[i].data)
 
-        assert bound_tuples[i].table.cols[i].split('.')[-1] == self.attribute_name
-        return bound_tuples[i].data[j]
+#         assert bound_tuples[i].table.cols[i].split('.')[-1] == self.attribute_name
+#         return bound_tuples[i].data[j]
 
     
-    def eval(self, bound_tuples:list[BoundTuple], *a, **kwa):
+#     def eval(self, bound_tuples:list[BoundTuple], *a, **kwa):
 
-        if len(bound_tuples) == 0 :
-            raise NameError(f'attribute used in empty context: {self.attribute_name}')
+#         if len(bound_tuples) == 0 :
+#             raise NameError(f'attribute used in empty context: {self.attribute_name}')
 
-        try :
-            return self.use_cache(bound_tuples)
-        except :
-            self._index_cache = None
+#         try :
+#             return self.use_cache(bound_tuples)
+#         except :
+#             self._index_cache = None
 
-        possible_matches = match_attribute_name_to_tuples(self.attribute_name, bound_tuples)
-        if len(possible_matches) == 0 :
-            raise NameError(f'Could not find attribute {self.attribute_name}')
-        if len(possible_matches) > 1 :
-            if len(bound_tuples) == 2 :
-                raise NameError(f'{self.attribute_name} is ambiguous in this context. Use the left. and right. prefixes to disambiguate')
-            else :
-                raise NameError(f'{self.attribute_name} is ambiguous in this context')
+#         possible_matches = match_attribute_name_to_tuples(self.attribute_name, bound_tuples)
+#         if len(possible_matches) == 0 :
+#             raise NameError(f'Could not find attribute {self.attribute_name}')
+#         if len(possible_matches) > 1 :
+#             if len(bound_tuples) == 2 :
+#                 raise NameError(f'{self.attribute_name} is ambiguous in this context. Use the left. and right. prefixes to disambiguate')
+#             else :
+#                 raise NameError(f'{self.attribute_name} is ambiguous in this context')
 
-        self._index_cache = possible_matches[0]
-        i, j = possible_matches[0]
+#         self._index_cache = possible_matches[0]
+#         i, j = possible_matches[0]
 
-        return bound_tuples[i].data[j]
+#         return bound_tuples[i].data[j]
 
-@dataclass
-class NamedRelation(RelationExpression):
-    relation_name: str
-    def eval(self, bound_tuples, known_relations:dict[str, Relation]) -> Relation:
-        try :
-            relation = known_relations[self.relation_name]
+# @dataclass
+# class NamedRelation(RelationExpression):
+#     relation_name: str
+#     def eval(self, bound_tuples, known_relations:dict[str, Relation]) -> Relation:
+#         try :
+#             relation = known_relations[self.relation_name]
 
-            return Relation(
-                cols = [
-                    '.'.join(([self.relation_name] + c.split('.'))[-2:])
-                    for c in relation.cols
-                ],
-                data=relation.data
-            )
-        except KeyError as e :
-            raise NameError(f'Not a known relation: {self.relation_name}')
+#             return Relation(
+#                 cols = [
+#                     '.'.join(([self.relation_name] + c.split('.'))[-2:])
+#                     for c in relation.cols
+#                 ],
+#                 data=relation.data
+#             )
+#         except KeyError as e :
+#             raise NameError(f'Not a known relation: {self.relation_name}')
 
 
 
-@dataclass
-class UnaryRelational(RelationExpression):
-    relation: RelationExpression
+# @dataclass
+# class UnaryRelational(RelationExpression):
+#     relation: RelationExpression
 
-    def eval(self, *a, **kwa) -> Relation:
-        return self.operation(self.relation.eval(*a, **kwa))
+#     def eval(self, *a, **kwa) -> Relation:
+#         return self.operation(self.relation.eval(*a, **kwa))
 
-    def operation(self, r:Relation) -> Relation:
-        raise NotImplementedError()
+#     def operation(self, r:Relation) -> Relation:
+#         raise NotImplementedError()
 
-def project(self:Project, r:Relation) -> Relation:
+# def project(self:Project, r:Relation) -> Relation:
 
-    projected_indices = []
-    used_cols = []
-    for i, col in enumerate(r.cols) :
-        projected_col = next((x for x in self.columns if col in x or col.split('.')[-1] in x), None)
-        if projected_col :
-            projected_indices.append(i)
-            used_cols.append(projected_col)
+#     projected_indices = []
+#     used_cols = []
+#     for i, col in enumerate(r.cols) :
+#         projected_col = next((x for x in self.columns if col in x or col.split('.')[-1] in x), None)
+#         if projected_col :
+#             projected_indices.append(i)
+#             used_cols.append(projected_col)
 
-    missed_cols = [x for x in self.columns if x not in used_cols]
+#     missed_cols = [x for x in self.columns if x not in used_cols]
 
-    if len(missed_cols) > 0 :
-        raise NameError(f"Projection failed, some colmmns not found: {', '.join(missed_cols)}")
+#     if len(missed_cols) > 0 :
+#         raise NameError(f"Projection failed, some colmmns not found: {', '.join(missed_cols)}")
 
-    return Relation(
-        cols=[r.cols[i] for i in projected_indices],
-        data=[
-            [d[i] for i in projected_indices]
-            for d in r.data
-        ]
-    )
+#     return Relation(
+#         cols=[r.cols[i] for i in projected_indices],
+#         data=[
+#             [d[i] for i in projected_indices]
+#             for d in r.data
+#         ]
+#     )
 
-def select(self:Select, r:Relation) -> Relation:
-    return Relation(
-        cols=r.cols,
-        data=[
-            d.data
-            for d in r.bound_tuples()
-            if self.predicate.eval([d], {})
-        ]
-    )
+# def select(self:Select, r:Relation) -> Relation:
+#     return Relation(
+#         cols=r.cols,
+#         data=[
+#             d.data
+#             for d in r.bound_tuples()
+#             if self.predicate.eval([d], {})
+#         ]
+#     )
 
-def rename(self:Rename, r:Relation) -> Relation:
-    def rename_col(col:str):
-        if col in self.renames : return self.renames[col]
+# def rename(self:Rename, r:Relation) -> Relation:
+#     def rename_col(col:str):
+#         if col in self.renames : return self.renames[col]
         
-        split = col.split('.')
-        if len(split) == 2 and split[1] in self.renames : return f'{split[0]}.{self.renames[split[1]]}'
-        return col
+#         split = col.split('.')
+#         if len(split) == 2 and split[1] in self.renames : return f'{split[0]}.{self.renames[split[1]]}'
+#         return col
     
-    return Relation(
-        cols = [rename_col(col) for col in r.cols],
-        data = r.data
-    )
+#     return Relation(
+#         cols = [rename_col(col) for col in r.cols],
+#         data = r.data
+#     )
     
-def compute(self:Compute, r:Relation) -> Relation:
-    return Relation(
-        cols = r.cols + [c[1] for c in self.computes],
-        data=[
-            d.data + [computation.eval([d], {}) for computation, _ in self.computes]
-            for d in r.bound_tuples()
-        ]
-    )
+# def compute(self:Compute, r:Relation) -> Relation:
+#     return Relation(
+#         cols = r.cols + [c[1] for c in self.computes],
+#         data=[
+#             d.data + [computation.eval([d], {}) for computation, _ in self.computes]
+#             for d in r.bound_tuples()
+#         ]
+#     )
 
 # @dataclass
 # class Project(UnaryRelational):
@@ -1996,7 +2037,8 @@ class RelationalTreeReducer:
             
             case _, token :
                 assert not isinstance(token, Parser.Node)
-             
+
+from math import log10, floor    
 class SqlTreeReducer:
     def ast(self, node:Parser.Node) -> AlgebraNode:
 
@@ -2029,61 +2071,61 @@ class SqlTreeReducer:
             # expression grammar
 
             case 'number', ('number', n, _) :
-                return ScalarLiteral(n)
+                return Expr.ScalarLiteral(n)
             case 'number', ('number', n, _), ('char', '.', _), ('number', m, _) :
-                from math import log10, floor
-                return ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))) )
+                return Expr.ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))) )
             case 'number', ('char', '.', _), ('number', m, _) :
-                from math import log10, floor
-                return ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))) )
+                return Expr.ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))) )
 
 
             case 'additive', Parser.Node() as left, ('char', '+', _), Parser.Node() as right :
-                return Add( self.reduce(left), self.reduce(right) )
+                return Expr.Add( self.reduce(left), self.reduce(right) )
             case 'additive', Parser.Node() as left, ('char', '-', _), Parser.Node() as right :
-                return Subtract( self.reduce(left), self.reduce(right) )
+                return Expr.Subtract( self.reduce(left), self.reduce(right) )
             case 'multiplicative', Parser.Node() as left, ('char', '*', _), Parser.Node() as right :
-                return Multiply( self.reduce(left), self.reduce(right) )
+                return Expr.Multiply( self.reduce(left), self.reduce(right) )
             case 'multiplicative', Parser.Node() as left, ('char', '/', _), Parser.Node() as right :
-                return Divide( self.reduce(left), self.reduce(right) )
+                return Expr.Divide( self.reduce(left), self.reduce(right) )
             case 'unm', (_, '-', _), Parser.Node() as operand :
-                return Unm(self.reduce(operand))
+                return Expr.Unm(self.reduce(operand))
 
             case 'additive', ('char', '-', _), Parser.Node() as operand :
-                return Unm(self.reduce(operand))
+                return Expr.Unm(self.reduce(operand))
 
             case _, ('string_literal', s, _) :
-                return ScalarLiteral(s)        
+                return Expr.ScalarLiteral(s)        
 
             case 'condition', Parser.Node() as left, ('char', '=', _), Parser.Node() as right :
-                return Eq(self.reduce(left), self.reduce(right))
+                return Expr.Eq(self.reduce(left), self.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '<', _), Parser.Node() as right :
-                return Less(self.reduce(left), self.reduce(right))
+                return Expr.Less(self.reduce(left), self.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '>', _), Parser.Node() as right :
-                return Less(self.reduce(right), self.reduce(left))
+                return Expr.Less(self.reduce(right), self.reduce(left))
             case 'condition', Parser.Node() as left, ('char', '=', _), ('char', '=', _), Parser.Node() as right :
-                return Eq(self.reduce(left), self.reduce(right))
+                return Expr.Eq(self.reduce(left), self.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '<', _), ('char', '=', _), Parser.Node() as right :
-                return Leq(self.reduce(left), self.reduce(right))
+                return Expr.Leq(self.reduce(left), self.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '>', _), ('char', '=', _), Parser.Node() as right :
-                return Leq(self.reduce(right), self.reduce(left))
+                return Expr.Leq(self.reduce(right), self.reduce(left))
 
             case 'disjunct', Parser.Node() as left, (_, 'or', _), Parser.Node() as right :
-                return Or(self.reduce(left), self.reduce(right))
+                return Expr.Or(self.reduce(left), self.reduce(right))
             case 'conjunct', Parser.Node() as left, (_, 'and', _), Parser.Node() as right :
-                return And(self.reduce(left), self.reduce(right))
+                return Expr.And(self.reduce(left), self.reduce(right))
             case 'not', (_, 'not', _), Parser.Node() as operand :
-                return Not(self.reduce(operand))
+                return Expr.Not(self.reduce(operand))
 
             case 'boolean_literal', ('identifier', 'false', _) :
-                return ScalarLiteral(False)
+                return Expr.ScalarLiteral(False)
             case 'boolean_literal', ('identifier', 'true', _) :
-                return ScalarLiteral(True)
+                return Expr.ScalarLiteral(True)
 
             case 'attribute', ('identifier', left, _), _, ('identifier', right, _):
-                return NamedAttribute(f"{left}.{right}")
+                return SQL.Attribute(table=left, col=right)
             case 'attribute', ('identifier', colname, _):
-                return NamedAttribute(colname)
+                return SQL.Attribute(col=colname)
+
+            
 
             # sql
 
@@ -2104,8 +2146,17 @@ class SqlTreeReducer:
             case 'binary_relational_operator', (_, "UNION", _), (_, "ALL", _) : 
                 return "UNION ALL"
                 
-                
-
+            case "aggregate", (_, "COUNT", _), _, (_, '*', _), _ :
+                return Expr.Count('*')
+            case "aggregate", (_, "COUNT", _), _, Parser.Node() as operand, _ :
+                return Expr.Count(self.reduce(operand))
+            case "aggregate", (_, "MAX", _), _, Parser.Node() as operand, _ :
+                return Expr.Max(self.reduce(operand))
+            case "aggregate", (_, "MIN", _), _, Parser.Node() as operand, _ :
+                return Expr.Min(self.reduce(operand))   
+            case "aggregate", (_, "MIN", _), _, Parser.Node() as operand, _ :
+                return Expr.Avg(self.reduce(operand))   
+            
             case 'select', *children :
                 pass
 

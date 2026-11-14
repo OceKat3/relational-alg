@@ -18,3 +18,6 @@ for document in test_cases:
 
     p = Parser(items=r.state_sets, document=tokens)
     parsetree = p.create_tree()
+
+
+"SELECT COUNT(A) FROM B;" # this should fail because aggregate values need to be renamed
