@@ -19,9 +19,9 @@ def string_literal(token:Token) -> bool:
     return token[0] == 'string_literal'
 hook_str_of_function(string_literal, 'string_literal')
 
-def number(token:Token) -> bool:
+def decimal(token:Token) -> bool:
     return token[0] == 'number'
-hook_str_of_function(number, 'number')
+hook_str_of_function(decimal, 'number')
 
 protected_identifiers = set()
 
@@ -47,7 +47,7 @@ arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
     "sum": [["product"], ["sum", special_char("+"), "sum"]],
     "product": [["factor"], ["product", special_char("*"), "product"]],
-    "factor": [[number], [special_char("("), "sum", special_char(")")]],
+    "factor": [[decimal], [special_char("("), "sum", special_char(")")]],
 }
 
 relational_algebra_grammar:grammartype = {
@@ -177,9 +177,9 @@ relational_algebra_grammar:grammartype = {
         ["attribute"],
     ],
     "number":[
-        [number],
-        [number, special_char('.'), number],
-        [special_char('.'), number],
+        [decimal],
+        [decimal, special_char('.'), decimal],
+        [special_char('.'), decimal],
     ],
 
     "attribute": [
@@ -215,7 +215,263 @@ relational_algebra_grammar:grammartype = {
     
 }
 
+
+
+# earley parser somehow works for all three of these? 
+# i thought that ambiguous grammars would break the parser, but clearly some ambiguous grammars work just fine
+left_recursive_test_grammar = {
+    START_SYMBOL: [["list"]],
+    "list": [
+        [decimal],
+        ["list", special_char(','), decimal]
+    ]
+}
+right_recursive_test_grammar = {
+    START_SYMBOL: [["list"]],
+    "list": [
+        [decimal],
+        [decimal, special_char(','), "list"]
+    ]
+}
+ambiguous_recursive_test_grammar = {
+    START_SYMBOL: [["list"]],
+    "list": [
+        [decimal],
+        ["list", special_char(','), "list"]
+    ]
+}
+
+def sql_keyword(keyword:str):
+    assert ' ' not in keyword, f'sql keyword cannot contain a space: {keyword}'
+    def predicate(token:Token) -> bool:
+        return token[0] == 'identifier' and token[1].casefold() == keyword.casefold()
+    return hook_str_of_function(predicate, keyword.upper())
+
+import itertools
+# https://stackoverflow.com/questions/1482308/how-to-get-all-subsets-of-a-set-powerset
+def powerset(iterable):
+    "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
+    s = list(iterable)
+    return itertools.chain.from_iterable(itertools.combinations(s, r) for r in range(len(s)+1))
+
+# i don't like this but it makes it easier to write SELECT
+def expand_optionals(production: list[str | Terminal | list[str | Terminal]]) -> Generator[list[str | Terminal]]:
+    num_optionals = sum(1 for x in production if isinstance(x, list))
+
+    for chosen_optionals in powerset(range(num_optionals)) :
+        optional_idx = 0
+        out_production: list[str | Terminal] = []
+        for x in production :
+            if isinstance(x, list):
+                if optional_idx in chosen_optionals :
+                    out_production += x
+                optional_idx += 1
+            else:
+                out_production.append(x)
+        yield out_production
+
+def listify_nonterminal(element: str, separator:str | Terminal = special_char(','), separator_optional:bool = True, recursion="left") -> grammartype:
+    productions:list[list[str | Terminal]] = [[element], [element + "_list", separator, element], [element + "_list", element]]
+    if recursion == "right":
+        productions = [x[::-1] for x in productions]
+    if not separator_optional :
+        productions.pop()
+    return {(element + "_list"): productions}
+
+assert list(expand_optionals(["a", ["b", "c"], "d", ["e"]])) == [["a", "d"], ["a", "b", "c", "d"], ["a", "d", "e"], ["a", "b", "c", "d", "e"]]
+
+
+# scalar: literal number or string
+# scalar_expression: string or equation or attribute
+# condition: boolean that might depend on identifiers
+# numeric_expression: equation
+# number: an int or float
+# attribute: table.column or column
+# attribute_list
+# scalar_expression_list
+sql_expression_grammar:grammartype = {
+    "boolean_expression": [
+        ["disjunct"]
+    ],
+    "disjunct":[
+        ["conjunct", literal_identifier('or'), "disjunct"],
+        ["conjunct"]
+    ],
+    "conjunct":[
+        ["not", literal_identifier('and'), "conjunct"],
+        ["not"]
+    ],
+    "not": [
+        ["boolean_factor"],
+        [literal_identifier('not'), "boolean_factor",]
+    ],
+    "boolean_factor": [
+        [special_char('('), "boolean_expression", special_char(')')],
+        ["condition"],
+    ],
+
+    "condition":[
+        ["boolean_literal"],
+        ["scalar_expression", special_char('<>'), "scalar_expression"],
+        ["scalar_expression", special_char('='), "scalar_expression"],
+        ["scalar_expression", special_char('<>'), special_char('='), "scalar_expression"],
+        ["scalar_expression", special_char('='), special_char('='), "scalar_expression"],
+    ],
+
+    "boolean_literal": [
+        [literal_identifier("true")],
+        [literal_identifier("false")]
+    ],
+
+    "scalar": [
+        ["number"],
+        [string_literal]
+    ],
+
+    "scalar_expression": [
+        ["numeric_expression"],
+        [string_literal],
+    ],
+
+    "numeric_expression": [
+        ["additive"]
+    ],
+
+    "additive": [
+        ["multiplicative", special_char('+-'), "additive"],
+        ["multiplicative"],
+    ],
+    "multiplicative": [
+        ["unm", special_char('*/'), "multiplicative"],
+        ["unm"],
+    ],
+    "unm": [
+        ["factor"],
+        [special_char('-'), "factor"],
+    ],
+    "factor": [
+        [special_char('('), "additive", special_char(')')],
+        ["number"],
+        ["attribute"],
+    ],
+    "number":[
+        [decimal],
+        [decimal, special_char('.'), decimal],
+        [special_char('.'), decimal],
+    ],
+    "attribute": [
+        [identifier],
+        [identifier, special_char('.'), identifier],
+    ],
+
+    **listify_nonterminal("attribute"),
+    **listify_nonterminal("scalar_expression"),
+}
+
 sql_grammar:grammartype = {
+    **sql_expression_grammar,
+
+    START_SYMBOL: [["input"]],
+
+    "input": [
+        ["statement"],
+        ["input", special_char(';'), "statement"]
+    ],
+
+    "statement": [
+        ["create_table"],
+        ["insert"],
+        ["select"],
+        # ["delete"]
+    ],
+
+
+    "create_table": [
+        [sql_keyword('CREATE'), sql_keyword('TABLE'), identifier, special_char('('), "column_def_list", special_char(')')]
+    ],
+    "type": [
+        [sql_keyword('NUM')],
+        [sql_keyword('VARCHAR')],
+        [sql_keyword('VARCHAR'), special_char('('), decimal, special_char(')')]
+    ],
+    "column_def": [
+        [identifier, "type"]
+    ],
+    **listify_nonterminal("column_def"),
+
+
+
+    "insert": [
+        [
+            sql_keyword('INSERT'), sql_keyword('INTO'), identifier, 
+            sql_keyword('VALUES'), "tuple_literal_list"
+        ],
+        [
+            sql_keyword('INSERT'), sql_keyword('INTO'), identifier,
+            special_char('('), "attribute_list", special_char(')'),
+            sql_keyword('VALUES'), "tuple_literal_list"
+        ]
+    ],
+    "tuple_literal": [
+        [special_char('('), "scalar_expression_list", special_char(')')]
+    ],
+    **listify_nonterminal("tuple_literal"),
+
+
+    "select": [
+        *expand_optionals([
+            sql_keyword('SELECT'),
+            [sql_keyword('DISTINCT')],
+            "select_result",
+            ["from"],
+            ["where"],
+            ["groupby"],
+            ["having"],
+            ["orderby"],
+            ["limit"]
+        ])
+    ],
+
+    "renamable_scalar_expression": [
+        ["scalar_expression"],
+        ["scalar_expression", sql_keyword('AS'), identifier]
+    ],
+    **listify_nonterminal("renamable_scalar_expression"),
+    "select_result": [
+        ["renamable_scalar_expression_list"],
+        [special_char('*')]
+    ],
+
+    "from": [[sql_keyword('FROM'), "join_clause"]],
+    "join_clause": [
+        [identifier],
+        [identifier, "join_operator", "table_or_subquery", "join_condition"]
+    ],
+    "table_or_subquery": [
+        [identifier],
+        [special_char('('), "select", special_char(')')]
+    ],
+    "join_operator": [
+        [special_char(',')], 
+        [literal('JOIN')],
+        [literal('INNER'), literal('JOIN')],
+        [literal('LEFT'), literal('JOIN')],
+        [literal('CROSS'), literal('JOIN')]
+    ],
+    "join_condition": [
+        [sql_keyword('ON'), "condition"]
+    ],
+
+    "where": [[sql_keyword('WHERE'), "condition"]],
+    "groupby": [
+        [sql_keyword('GROUP'), sql_keyword('BY'), "attribute_list"]
+    ],
+
+    "having": [[sql_keyword('HAVING'), "condition"]],
+
+    "orderby": [[sql_keyword('ORDER'), sql_keyword('BY'), "scalar_expression_list"]],
+    "limit": [[sql_keyword('LIMIT'), "number"]],
+        
 
 }
 
@@ -830,16 +1086,25 @@ class Not(BooleanExpression):
     def eval(self, *a, **kwa) -> bool:
         return not self.operand.eval(*a, **kwa)
 
-
+from pprint import pformat
 def check_grammar(grammar:grammartype):
-
+    used = set()
     for key in grammar:
         for rule in grammar[key]:
             for symbol in rule:
                 if type(symbol) == str :
+                    used.add(symbol)
                     assert symbol in grammar, f"{key} -> ...{symbol}...,   {symbol} not found in grammar"
-check_grammar(relational_algebra_grammar)
+                elif isinstance(symbol, Callable):
+                    assert isinstance(symbol(('identifier','aasdasd',5)), bool), f"{key} -> ...{symbol}..., {symbol} is not a function from tokens to bools"
+    # TODO check for duplicate productions
+    unused = set(grammar.keys()).difference(used).difference({START_SYMBOL})
+    if len(unused) > 0 :
+        print(f"note, grammar did not use the following nonterminals: {unused}")
 
+check_grammar(sql_grammar)
+print("checked grammar, quitting")
+quit()
 """
 [('number', 3), ('char', '+'), ('number', 4), ('char', '*'), ('number', 5)]
 
@@ -854,7 +1119,7 @@ number + number * number
 simple_arithmetic_grammar = {
     START_SYMBOL: [["sum"]],
     "sum": [["number"], [special_char("("), "sum", special_char(")")], ["sum", special_char("+"), "sum"]],
-    "number": [[number]]
+    "number": [[decimal]]
 }
 
 from typing import Literal, Generator
@@ -1141,7 +1406,7 @@ class Recognizer:
             def terminal_to_str(item:InvertedItem):
                 t:Terminal = item.next_token #type: ignore
                 if t == identifier : return 'an identifier'
-                if t == number : return 'a number'
+                if t == decimal : return 'a number'
                 return f"'{t.__str__()}'"
 
             recommendations = []
@@ -1539,6 +1804,7 @@ def parse_to_ast(document):
 
     return ast
 
+
 from pprint import pprint
 
 if __name__ == "__main__" :
@@ -1547,11 +1813,10 @@ if __name__ == "__main__" :
 
     tokens = list(tokenizer(document))
 
-    pprint(tokens)
+    recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
+    recognizer.earley_recognize()
 
-    # recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
-    # recognizer.earley_recognize()
+    parser = Parser(items = recognizer.state_sets, document=recognizer.document)
+    parse_tree = parser.create_tree()
 
-    # parser = Parser(items = recognizer.state_sets, document=recognizer.document)
-    # parse_tree = parser.create_tree()
-
+    parse_tree.prettyprint()

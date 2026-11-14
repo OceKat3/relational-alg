@@ -17,6 +17,17 @@ So like, high level, text from the repl -> sql parse tree -> sql AST -> relation
 
 Do I want to support indexes? The assignment says nothing about indexing or b trees so I think i'll write my implementation without indexes and maybe try to add them if I have time...
 
+I should also add that both the SQL AST and logical relational algebra AST will have to do some kind of typechecking to detect errors. I don't think it'll be super hard to implement recursively. Maybe even the logical plan will typecheck before it runs..? I can already think of an algorithm for this, it should not be hard since an AST is a convenient structure
 
 
 At this point, I think i'm ready to work on the SQL parser. I want to write everything in a single file again, this time called rdbms.py
+
+I'm using the given grammar in the assignment spec as a reference, but SQLite has really amazing grammar diagrams that i'm also referencing:
+
+https://www.sqlite.org/lang_createtable.html
+https://www.sqlite.org/lang_select.html
+https://www.sqlite.org/lang_insert.html
+https://www.sqlite.org/lang_delete.html
+
+the SQLite website basically lets you explore the entire grammar which is awesome
+
