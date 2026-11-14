@@ -21,19 +21,19 @@ hook_str_of_function(string_literal, 'string_literal')
 
 def decimal(token:Token) -> bool:
     return token[0] == 'number'
-hook_str_of_function(decimal, 'number')
+hook_str_of_function(decimal, 'decimal')
 
 protected_identifiers = set()
 
 def literal_identifier(s:str):
-    protected_identifiers.add(s)
+    protected_identifiers.add(s.casefold())
 
     def predicate(token:Token) -> bool:
         return token[0] == 'identifier' and token[1] == s
     return hook_str_of_function(predicate, s)
 
 def identifier(token:Token):
-    return token[0] == 'identifier' and token[1] not in protected_identifiers
+    return token[0] == 'identifier' and token[1].casefold() not in protected_identifiers
 hook_str_of_function(identifier, 'identifier')
 
 def special_char(s:str):
@@ -243,6 +243,9 @@ ambiguous_recursive_test_grammar = {
 
 def sql_keyword(keyword:str):
     assert ' ' not in keyword, f'sql keyword cannot contain a space: {keyword}'
+    
+    protected_identifiers.add(keyword.casefold())
+
     def predicate(token:Token) -> bool:
         return token[0] == 'identifier' and token[1].casefold() == keyword.casefold()
     return hook_str_of_function(predicate, keyword.upper())
@@ -270,7 +273,7 @@ def expand_optionals(production: list[str | Terminal | list[str | Terminal]]) ->
                 out_production.append(x)
         yield out_production
 
-def listify_nonterminal(element: str, separator:str | Terminal = special_char(','), separator_optional:bool = True, recursion="left") -> grammartype:
+def listify_nonterminal(element: str, separator:str | Terminal = special_char(','), separator_optional:bool = True, recursion="right") -> grammartype:
     productions:list[list[str | Terminal]] = [[element], [element + "_list", separator, element], [element + "_list", element]]
     if recursion == "right":
         productions = [x[::-1] for x in productions]
@@ -331,6 +334,15 @@ sql_expression_grammar:grammartype = {
     "scalar_expression": [
         ["numeric_expression"],
         [string_literal],
+        ["aggregate_function", special_char('('), "scalar_expression", special_char(')')],
+        [sql_keyword("COUNT"), special_char('('), special_char('*'), special_char(')')],
+    ],
+
+    "aggregate_function": [
+        [sql_keyword('COUNT')],
+        [sql_keyword('AVG')],
+        [sql_keyword('MIN')],
+        [sql_keyword('MAX')],
     ],
 
     "numeric_expression": [
@@ -366,6 +378,11 @@ sql_expression_grammar:grammartype = {
 
     **listify_nonterminal("attribute"),
     **listify_nonterminal("scalar_expression"),
+    "identifier_list": [
+        [identifier],
+        [identifier, "identifier_list"],
+        [identifier, special_char(','), "identifier_list"]
+    ]
 }
 
 sql_grammar:grammartype = {
@@ -375,16 +392,21 @@ sql_grammar:grammartype = {
 
     "input": [
         ["statement"],
-        ["input", special_char(';'), "statement"]
+        ["statement", special_char(';')],
+        ["statement", special_char(';'), "input"]
     ],
 
     "statement": [
         ["create_table"],
         ["insert"],
-        ["select"],
+        ["query"],
         # ["delete"]
     ],
 
+    "query": [
+        ["select"],
+        ["select", "binary_relational_operator", "query"]
+    ],
 
     "create_table": [
         [sql_keyword('CREATE'), sql_keyword('TABLE'), identifier, special_char('('), "column_def_list", special_char(')')]
@@ -429,37 +451,43 @@ sql_grammar:grammartype = {
             ["having"],
             ["orderby"],
             ["limit"]
-        ])
+        ]),
     ],
 
-    "renamable_scalar_expression": [
+    "select_item": [
         ["scalar_expression"],
-        ["scalar_expression", sql_keyword('AS'), identifier]
+        ["scalar_expression", sql_keyword('AS'), identifier],
     ],
-    **listify_nonterminal("renamable_scalar_expression"),
+    **listify_nonterminal("select_item"),
     "select_result": [
-        ["renamable_scalar_expression_list"],
+        ["select_item_list"],
         [special_char('*')]
     ],
 
-    "from": [[sql_keyword('FROM'), "join_clause"]],
+    "from": [
+        [sql_keyword('FROM'), "table_or_subquery"],
+        [sql_keyword('FROM'), "table_or_subquery", "join_clause"],
+    ],
     "join_clause": [
-        [identifier],
-        [identifier, "join_operator", "table_or_subquery", "join_condition"]
+        ["join_operator", "table_or_subquery", "join_condition"],
+        ["join_operator", "table_or_subquery", "join_condition", "join_clause"],
+        [special_char(','), "table_or_subquery"],
+        [special_char(','), "table_or_subquery", "join_clause"]
     ],
     "table_or_subquery": [
         [identifier],
-        [special_char('('), "select", special_char(')')]
+        [identifier, sql_keyword("AS"), identifier],
+        [special_char('('), "select", special_char(')'), sql_keyword("AS"), identifier]
     ],
     "join_operator": [
-        [special_char(',')], 
-        [literal('JOIN')],
-        [literal('INNER'), literal('JOIN')],
-        [literal('LEFT'), literal('JOIN')],
-        [literal('CROSS'), literal('JOIN')]
+        [sql_keyword('JOIN')],
+        [sql_keyword('INNER'), sql_keyword('JOIN')],
+        [sql_keyword('LEFT'), sql_keyword('JOIN')],
+        [sql_keyword('CROSS'), sql_keyword('JOIN')]
     ],
     "join_condition": [
-        [sql_keyword('ON'), "condition"]
+        [sql_keyword('ON'), "condition"],
+        [sql_keyword('USING'), "identifier_list"],
     ],
 
     "where": [[sql_keyword('WHERE'), "condition"]],
@@ -471,7 +499,13 @@ sql_grammar:grammartype = {
 
     "orderby": [[sql_keyword('ORDER'), sql_keyword('BY'), "scalar_expression_list"]],
     "limit": [[sql_keyword('LIMIT'), "number"]],
-        
+
+    "binary_relational_operator": [
+        [sql_keyword("UNION")], 
+        [sql_keyword("UNION"), sql_keyword("ALL")], 
+        [sql_keyword("INTERSECT")],
+        [sql_keyword("EXCEPT")],
+    ],
 
 }
 
@@ -1097,14 +1131,43 @@ def check_grammar(grammar:grammartype):
                     assert symbol in grammar, f"{key} -> ...{symbol}...,   {symbol} not found in grammar"
                 elif isinstance(symbol, Callable):
                     assert isinstance(symbol(('identifier','aasdasd',5)), bool), f"{key} -> ...{symbol}..., {symbol} is not a function from tokens to bools"
-    # TODO check for duplicate productions
+
+    def production_to_str(production:list[str | Terminal]) -> str :
+        return ' '.join([x.__str__() for x in production])
+    def rule_to_str(rule:list[list[str | Terminal]]) -> str :
+        return ' & '.join(production_to_str(x) for x in rule)
+
+    for key1, key2 in itertools.combinations(grammar.keys(), 2) :
+        if rule_to_str(grammar[key1]) == rule_to_str(grammar[key2]) :
+            print(f"possibly duplicate rules {key1} and {key2}")
+
+    for key1, key2 in itertools.combinations(grammar.keys(), 2) :
+        productions1 = set(production_to_str(p) for p in grammar[key1])
+        productions2 = set(production_to_str(p) for p in grammar[key2])
+
+        intersection = productions1.intersection(productions2)
+        if len(intersection) > 0 :
+            print(f"possibly duplicate productions in {key1} and {key2} : {intersection}")
+        
+    
     unused = set(grammar.keys()).difference(used).difference({START_SYMBOL})
     if len(unused) > 0 :
         print(f"note, grammar did not use the following nonterminals: {unused}")
 
+    def check_for_left_recursion(nonterminal:str, path:list[str]=[]):
+        path = path + [nonterminal]
+        left_productions = [x[0] for x in grammar[nonterminal]]
+        for l in left_productions :
+            if not isinstance(l, str) : continue
+            if l in path :
+                print('left recursive path: ', ' -> '.join(path + [l]))
+            else:
+                check_for_left_recursion(l, path)
+    check_for_left_recursion(START_SYMBOL)
+
 check_grammar(sql_grammar)
-print("checked grammar, quitting")
-quit()
+
+
 """
 [('number', 3), ('char', '+'), ('number', 4), ('char', '*'), ('number', 5)]
 
@@ -1364,9 +1427,12 @@ class Recognizer:
             
             # print(candidates)
             # quit()
-
+        seen_set:set[InvertedItem] = set()
         def diagnose_recursively(item:InvertedItem) -> set[InvertedItem]:
+            if item in seen_set : return set()
+            seen_set.add(item)
 
+            
             # assert item.progress < len(item.rule)
             if item.progress == len(item.rule) : return set()
 
@@ -1531,12 +1597,13 @@ class Parser:
                 child if isinstance(child, tuple) else child.to_printable_graph() for child in self.children
             ])
 
-        def prettyprint(self, indentation_level:int=0):
+        def prettyprint(self, indentation_level:int=0, simple=False):
             SPACE = '  '
-            print(SPACE * indentation_level + self.item.goal)
+            if (len(self.children) > 1) or not simple :                
+                print(SPACE * indentation_level + self.item.goal)
             for child in self.children :
                 if isinstance(child, Parser.Node) :
-                    child.prettyprint(indentation_level+1)
+                    child.prettyprint(indentation_level+1, simple=simple)
                 else :
                     print(SPACE * (indentation_level+1) + str(child))
 
@@ -1553,11 +1620,14 @@ class Parser:
     def get_max_length_item(self, i:int, symbol:str, end:int) -> InvertedItem:
 
         state_set = self.inverted_items[i]
-        
-        return max(
-            [item for item in state_set if item.goal == symbol and item not in self.seen_set and item.end <= end],
-            key = lambda item : item.end,
-        )
+
+        try :
+            return max(
+                [item for item in state_set if item.goal == symbol and item not in self.seen_set and item.end <= end],
+                key = lambda item : item.end,
+            )
+        except ValueError :
+            raise RuntimeError(f"is the grammar ambiguous? ", i, symbol, end)
 
     def create_tree(self, i=0, symbol=START_SYMBOL, end=-1, recursive_depth:int = 0) -> Node :
         if end == -1 : end = len(self.document)
@@ -1569,6 +1639,7 @@ class Parser:
         # print('    ' * recursive_depth, end=" ")
         # print(i, symbol, end)
         item = self.get_max_length_item(i, symbol, end)
+       
         # print(str(item))
         self.seen_set.append(item)
 
@@ -1589,8 +1660,13 @@ class Parser:
                 document_position += 1
             else:
                 assert isinstance(child_symbol, str)
+                try :
+                    child_node = self.create_tree(document_position, child_symbol, end=item.end, recursive_depth=recursive_depth+1)
+                except BaseException as e :
+                    print('asdasdasdasdasasdsd')
+                    Parser.Node(item=item, children=children).prettyprint(simple=False)
+                    exit()
 
-                child_node = self.create_tree(document_position, child_symbol, end=item.end, recursive_depth=recursive_depth+1)
                 children.append(child_node)
                 document_position = child_node.item.end
 
@@ -1794,13 +1870,13 @@ def parse_to_ast(document):
 
     tokens = list(tokenizer(document))
 
-    recognizer = Recognizer(document=tokens, real_string_input=document)
+    recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
     recognizer.earley_recognize()
 
     parser = Parser(items = recognizer.state_sets, document=recognizer.document)
     parse_tree = parser.create_tree()
 
-    ast = RelationalTreeReducer().ast(parse_tree)
+    # ast = RelationalTreeReducer().ast(parse_tree)
 
     return ast
 
@@ -1809,14 +1885,14 @@ from pprint import pprint
 
 if __name__ == "__main__" :
 
-    document = "SELECT col1, col2 FROM table WHERE col1 = 4;"
+    document = "SELECT a e.d a.b+c.d-(-e.f) g AS f h FROM sometable JOIN someothertable USING d LEFT JOIN (select a,b FROM c WHERE d=e) ON a=d GROUP BY a b HAVING c=d"
 
     tokens = list(tokenizer(document))
 
     recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
     recognizer.earley_recognize()
 
-    parser = Parser(items = recognizer.state_sets, document=recognizer.document)
+    parser = Parser(items = recognizer.state_sets, document=recognizer.document)    
     parse_tree = parser.create_tree()
 
     parse_tree.prettyprint()
