@@ -509,6 +509,56 @@ sql_grammar:grammartype = {
 
 }
 
+from pprint import pformat
+def check_grammar(grammar:grammartype):
+    used = set()
+    for key in grammar:
+        for rule in grammar[key]:
+            for symbol in rule:
+                if type(symbol) == str :
+                    used.add(symbol)
+                    assert symbol in grammar, f"{key} -> ...{symbol}...,   {symbol} not found in grammar"
+                elif isinstance(symbol, Callable):
+                    assert isinstance(symbol(('identifier','aasdasd',5)), bool), f"{key} -> ...{symbol}..., {symbol} is not a function from tokens to bools"
+
+    def production_to_str(production:list[str | Terminal]) -> str :
+        return ' '.join([x.__str__() for x in production])
+    def rule_to_str(rule:list[list[str | Terminal]]) -> str :
+        return ' & '.join(production_to_str(x) for x in rule)
+
+    for key1, key2 in itertools.combinations(grammar.keys(), 2) :
+        if rule_to_str(grammar[key1]) == rule_to_str(grammar[key2]) :
+            print(f"possibly duplicate rules {key1} and {key2}")
+
+    for key1, key2 in itertools.combinations(grammar.keys(), 2) :
+        productions1 = set(production_to_str(p) for p in grammar[key1])
+        productions2 = set(production_to_str(p) for p in grammar[key2])
+
+        intersection = productions1.intersection(productions2)
+        if len(intersection) > 0 :
+            print(f"possibly duplicate productions in {key1} and {key2} : {intersection}")
+        
+    
+    unused = set(grammar.keys()).difference(used).difference({START_SYMBOL})
+    if len(unused) > 0 :
+        print(f"note, grammar did not use the following nonterminals: {unused}")
+
+    def check_for_left_recursion(nonterminal:str, path:list[str]=[]):
+        path = path + [nonterminal]
+        left_productions = [x[0] for x in grammar[nonterminal]]
+        for l in left_productions :
+            if not isinstance(l, str) : continue
+            if l in path :
+                print('left recursive path: ', ' -> '.join(path + [l]))
+            else:
+                check_for_left_recursion(l, path)
+    check_for_left_recursion(START_SYMBOL)
+
+check_grammar(sql_grammar)
+
+
+
+
 
 from typing import Any
 
@@ -1120,70 +1170,7 @@ class Not(BooleanExpression):
     def eval(self, *a, **kwa) -> bool:
         return not self.operand.eval(*a, **kwa)
 
-from pprint import pformat
-def check_grammar(grammar:grammartype):
-    used = set()
-    for key in grammar:
-        for rule in grammar[key]:
-            for symbol in rule:
-                if type(symbol) == str :
-                    used.add(symbol)
-                    assert symbol in grammar, f"{key} -> ...{symbol}...,   {symbol} not found in grammar"
-                elif isinstance(symbol, Callable):
-                    assert isinstance(symbol(('identifier','aasdasd',5)), bool), f"{key} -> ...{symbol}..., {symbol} is not a function from tokens to bools"
 
-    def production_to_str(production:list[str | Terminal]) -> str :
-        return ' '.join([x.__str__() for x in production])
-    def rule_to_str(rule:list[list[str | Terminal]]) -> str :
-        return ' & '.join(production_to_str(x) for x in rule)
-
-    for key1, key2 in itertools.combinations(grammar.keys(), 2) :
-        if rule_to_str(grammar[key1]) == rule_to_str(grammar[key2]) :
-            print(f"possibly duplicate rules {key1} and {key2}")
-
-    for key1, key2 in itertools.combinations(grammar.keys(), 2) :
-        productions1 = set(production_to_str(p) for p in grammar[key1])
-        productions2 = set(production_to_str(p) for p in grammar[key2])
-
-        intersection = productions1.intersection(productions2)
-        if len(intersection) > 0 :
-            print(f"possibly duplicate productions in {key1} and {key2} : {intersection}")
-        
-    
-    unused = set(grammar.keys()).difference(used).difference({START_SYMBOL})
-    if len(unused) > 0 :
-        print(f"note, grammar did not use the following nonterminals: {unused}")
-
-    def check_for_left_recursion(nonterminal:str, path:list[str]=[]):
-        path = path + [nonterminal]
-        left_productions = [x[0] for x in grammar[nonterminal]]
-        for l in left_productions :
-            if not isinstance(l, str) : continue
-            if l in path :
-                print('left recursive path: ', ' -> '.join(path + [l]))
-            else:
-                check_for_left_recursion(l, path)
-    check_for_left_recursion(START_SYMBOL)
-
-check_grammar(sql_grammar)
-
-
-"""
-[('number', 3), ('char', '+'), ('number', 4), ('char', '*'), ('number', 5)]
-
-sum
-sum + product
-number + product
-number + product * factor
-number + number * number
-
-"""
-
-simple_arithmetic_grammar = {
-    START_SYMBOL: [["sum"]],
-    "sum": [["number"], [special_char("("), "sum", special_char(")")], ["sum", special_char("+"), "sum"]],
-    "number": [[decimal]]
-}
 
 from typing import Literal, Generator
 
@@ -1865,6 +1852,130 @@ class RelationalTreeReducer:
             case _, token :
                 assert not isinstance(token, Parser.Node)
              
+class SqlTreeReducer:
+    def ast(self, node:Parser.Node) -> AlgebraNode:
+
+        root = self.reduce(node)
+        assert isinstance(root, AlgebraNode)
+
+        return root
+
+    def make_sql_tokens_uppercase(self, node:Parser.Node):
+        for i, (token_or_node, target) in enumerate(zip(node.children, node.item.rule)) :
+            if not isinstance(token_or_node, tuple): continue
+            kind, data, i = token_or_node
+            if target.__str__() == target.__str__().upper() and kind != 'number' and isinstance(data, str) :
+                node.children[i] = (kind, data.upper(), i)
+
+    def reduce(self, node:Parser.Node) -> Any:
+        
+        self.make_sql_tokens_uppercase(node)
+
+        match node.item.goal, *node.children :
+
+            # list
+            case str(nonterminal), Parser.Node() as attribute if nonterminal.endswith('_list') :
+                return [self.reduce(attribute).attribute_name]
+            case str(nonterminal), Parser.Node() as attribute, Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
+                return [self.reduce(attribute).attribute_name] + self.reduce(rest_of_list)
+            case str(nonterminal), Parser.Node() as attribute, _, Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
+                return [self.reduce(attribute).attribute_name] + self.reduce(rest_of_list)
+
+            # expression grammar
+
+            case 'number', ('number', n, _) :
+                return ScalarLiteral(n)
+            case 'number', ('number', n, _), ('char', '.', _), ('number', m, _) :
+                from math import log10, floor
+                return ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))) )
+            case 'number', ('char', '.', _), ('number', m, _) :
+                from math import log10, floor
+                return ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))) )
+
+
+            case 'additive', Parser.Node() as left, ('char', '+', _), Parser.Node() as right :
+                return Add( self.reduce(left), self.reduce(right) )
+            case 'additive', Parser.Node() as left, ('char', '-', _), Parser.Node() as right :
+                return Subtract( self.reduce(left), self.reduce(right) )
+            case 'multiplicative', Parser.Node() as left, ('char', '*', _), Parser.Node() as right :
+                return Multiply( self.reduce(left), self.reduce(right) )
+            case 'multiplicative', Parser.Node() as left, ('char', '/', _), Parser.Node() as right :
+                return Divide( self.reduce(left), self.reduce(right) )
+            case 'unm', (_, '-', _), Parser.Node() as operand :
+                return Unm(self.reduce(operand))
+
+            case 'additive', ('char', '-', _), Parser.Node() as operand :
+                return Unm(self.reduce(operand))
+
+            case _, ('string_literal', s, _) :
+                return ScalarLiteral(s)        
+
+            case 'condition', Parser.Node() as left, ('char', '=', _), Parser.Node() as right :
+                return Eq(self.reduce(left), self.reduce(right))
+            case 'condition', Parser.Node() as left, ('char', '<', _), Parser.Node() as right :
+                return Less(self.reduce(left), self.reduce(right))
+            case 'condition', Parser.Node() as left, ('char', '>', _), Parser.Node() as right :
+                return Less(self.reduce(right), self.reduce(left))
+            case 'condition', Parser.Node() as left, ('char', '=', _), ('char', '=', _), Parser.Node() as right :
+                return Eq(self.reduce(left), self.reduce(right))
+            case 'condition', Parser.Node() as left, ('char', '<', _), ('char', '=', _), Parser.Node() as right :
+                return Leq(self.reduce(left), self.reduce(right))
+            case 'condition', Parser.Node() as left, ('char', '>', _), ('char', '=', _), Parser.Node() as right :
+                return Leq(self.reduce(right), self.reduce(left))
+
+            case 'disjunct', Parser.Node() as left, (_, 'or', _), Parser.Node() as right :
+                return Or(self.reduce(left), self.reduce(right))
+            case 'conjunct', Parser.Node() as left, (_, 'and', _), Parser.Node() as right :
+                return And(self.reduce(left), self.reduce(right))
+            case 'not', (_, 'not', _), Parser.Node() as operand :
+                return Not(self.reduce(operand))
+
+            case 'boolean_literal', ('identifier', 'false', _) :
+                return ScalarLiteral(False)
+            case 'boolean_literal', ('identifier', 'true', _) :
+                return ScalarLiteral(True)
+
+            case 'attribute', ('identifier', left, _), _, ('identifier', right, _):
+                return NamedAttribute(f"{left}.{right}")
+            case 'attribute', ('identifier', colname, _):
+                return NamedAttribute(colname)
+
+            # sql
+
+            case 'query', Parser.Node() as left, Parser.Node() as operator, Parser.Node() as right :
+                operator = self.reduce(operator)
+                match operator:
+                    case "UNION":
+                        return
+                    case "UNION ALL":
+                        return
+                    case "INTERSECT":
+                        return
+                    case "EXCLUDE":
+                        return
+
+            case 'binary_relational_operator', (_, s, _) : 
+                return s
+            case 'binary_relational_operator', (_, "UNION", _), (_, "ALL", _) : 
+                return "UNION ALL"
+                
+                
+
+            case 'select', *children :
+                pass
+
+
+            # trivial cases
+
+            case _, (_, 'eval', _), Parser.Node() as child :
+                return self.reduce(child)
+            case _, ('char', '(', _), Parser.Node() as child, ('char', ')', _) :
+                return self.reduce(child)
+            case _, Parser.Node() as child:
+                return self.reduce(child)
+            
+            case _, token :
+                assert not isinstance(token, Parser.Node)
 
 def parse_to_ast(document):
 
@@ -1876,7 +1987,7 @@ def parse_to_ast(document):
     parser = Parser(items = recognizer.state_sets, document=recognizer.document)
     parse_tree = parser.create_tree()
 
-    # ast = RelationalTreeReducer().ast(parse_tree)
+    ast = RelationalTreeReducer().ast(parse_tree)
 
     return ast
 
@@ -1885,7 +1996,7 @@ from pprint import pprint
 
 if __name__ == "__main__" :
 
-    document = "SELECT a e.d a.b+c.d-(-e.f) g AS f h FROM sometable JOIN someothertable USING d LEFT JOIN (select a,b FROM c WHERE d=e) ON a=d GROUP BY a b HAVING c=d"
+    document = ""
 
     tokens = list(tokenizer(document))
 
