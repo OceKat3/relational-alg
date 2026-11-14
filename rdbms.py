@@ -607,12 +607,13 @@ class Expr:
     class ScalarExpression:
         def eval(self, *a, **kwa) -> int | float | str:
             raise NotImplementedError()
-        
-        def typecheck(self) -> Any:
-            pass
+        def typecheck(self) -> type[int] | type[float] | type[str]:
+            raise NotImplementedError()
 
     class BooleanExpression:
         def eval(self, *a, **kwa) -> bool:
+            raise NotImplementedError()
+        def typecheck(self) -> type[bool]:
             raise NotImplementedError()
 
     @dataclass
@@ -645,7 +646,6 @@ class Expr:
         operation = lambda self, x, y : x+y
         verb = 'add'
         allowed_types = [int, float, str]
-            
     class Subtract(BinaryScalarExpression):
         operation = lambda self, x, y : x-y
         verb = 'subtract'
@@ -664,6 +664,11 @@ class Expr:
             if not (isinstance(arg, int) or isinstance(arg, float)) :
                 raise TypeError(f'Cannot negate a {type(arg)}')
             return -arg
+        
+        def typecheck(self) -> type[int] | type[float] | type[str]:
+            t = self.arg.typecheck()
+            assert t in [int, float], f"cannot negate {t} (unary minus)"
+            return t
 
     @dataclass
     class BinaryCondition(BooleanExpression):
@@ -679,6 +684,12 @@ class Expr:
             return self.operation(
                 left, right 
             )
+
+        def typecheck(self) -> type[bool]:
+            left = self.left.typecheck()
+            right = self.right.typecheck()
+            assert left == right, f"cannot compare ({self.__class__.__name__}) {left} and {right}"
+            return bool
 
     class Eq(BinaryCondition):
         operation = lambda self, x, y : x == y
@@ -698,6 +709,11 @@ class Expr:
             return self.operation(
                 self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
             )
+        def typecheck(self) -> type[bool]:
+            left = self.left.typecheck()
+            right = self.right.typecheck()
+            assert left == right == bool, "how did this happen gerbert"
+            return bool
 
     class And(BinaryBooleanExpression):
         operation = lambda self, x, y : x and y
@@ -710,7 +726,11 @@ class Expr:
 
         def eval(self, *a, **kwa) -> bool:
             return not self.operand.eval(*a, **kwa)
-
+        def typecheck(self) -> type[bool]:
+            t = self.operand.typecheck()
+            assert t == bool, "how did this happen gerbert"
+            return bool
+    
     class AggregateFunction:
         def send(self, tuple) -> None:
             raise NotImplementedError()
@@ -722,12 +742,18 @@ class Expr:
         val: str | float | int
         def eval(self, *a, **kwa) -> int | float | str:
             return self.val
+        
+        def typecheck(self) -> type[int] | type[float] | type[str]:
+            return type(self.val)
 
     @dataclass
     class BooleanLiteral(BooleanExpression):
         val: bool
         def eval(self, *a, **kwa) -> bool:
             return self.val
+        
+        def typecheck(self) -> type[bool]:
+            return bool
 
 class SQL:
 

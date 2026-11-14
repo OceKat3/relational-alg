@@ -50,3 +50,7 @@ and then the functions are all gonna be awesome and take less arguments. I wonde
 
 Yesterday I started writing a bit of the sql translator function (SqlTreeReducer) but really i can't write that until the sql AST classes are done. So I start with the sql ast classes
 
+
+Now that I'm working on typechecking I'm starting to feel really good about it. I'm writing typechecks with assertions right now but (TODO) typechecks should probably raise TypeErrors instead of AssertionErrors
+
+The idea is: typecheck will raise if anything is incorrect, which will blow up the whole recursive call. Otherwise, if everything is okay, the typecheck function returns some information about the type. either int/bool/str or a Table instance or a list of ColDefs, stuff like that. 
