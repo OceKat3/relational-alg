@@ -813,6 +813,11 @@ class SQL:
         distinct: bool = False
         from_table: SQL.TableName | SQL.Subquery | None = None
         from_joins: list[SQL.Join] | None = None
+        where: Expr.BooleanExpression | None = None
+        group_attributes: list[SQL.Attribute] | None = None
+        having: Expr.BooleanExpression | None = None
+        order_by: list[Expr.ScalarExpression] | None = None
+        limit: int | None = None
 
         @dataclass
         class Item:
@@ -829,6 +834,7 @@ class SQL:
         rename: str
 
         def typecheck(self) -> Table:
+            assert self.rename is not None
             return Table(
                 self.rename,
                 self.query.typecheck()
@@ -842,7 +848,7 @@ class SQL:
 
         def typecheck(self) -> Table:
             assert self.on.typecheck() == bool
-            raise NotImplementedError()
+            pass
 
     # natural inner join
     @dataclass
@@ -1360,16 +1366,16 @@ class RelationDivide(BinaryRelationalExpression):
 class CartesianProduct(BinaryRelationalExpression):
     operation = cartesian_product
 
-type JoinSpecification = tuple[
-    Literal['join'],
-    Literal['natural'] | BooleanExpression,
-    Literal['inner'] | Literal['left'] | Literal['outer']
-]
+# type JoinSpecification = tuple[
+#     Literal['join'],
+#     Literal['natural'] | BooleanExpression,
+#     Literal['inner'] | Literal['left'] | Literal['outer']
+# ]
 
-@dataclass
-class GenericJoin(BinaryRelationalExpression):
-    jointype:JoinSpecification
-    operation = join
+# @dataclass
+# class GenericJoin(BinaryRelationalExpression):
+#     jointype:JoinSpecification
+#     operation = join
 
 
 
@@ -1870,189 +1876,6 @@ def dict_union(d1:dict, d2:dict):
         chain(d1.items(), d2.items())
     )
 
-@dataclass    
-class RelationalTreeReducer:
-
-    def ast(self, node:Parser.Node) -> AlgebraNode:
-
-        root = self.reduce(node)
-        assert isinstance(root, AlgebraNode)
-
-        return root
-
-    def reduce(self, node:Parser.Node) -> Any:
-        
-        match node.item.goal, *node.children :
-
-            case 'input', Parser.Node() as inp, _ :
-                return self.reduce(inp)
-            
-            case 'unary_relational_expression', ('identifier', 'select', _), _, Parser.Node() as phi, _, _, Parser.Node() as relation, _ :
-                return Select(
-                    self.reduce(relation),
-                    self.reduce(phi)
-                )
-            case 'unary_relational_expression', ('identifier', 'project', _), _, Parser.Node() as column_list, _, _, Parser.Node() as relation, _ :
-                return Project(
-                    self.reduce(relation),
-                    self.reduce(column_list)
-                )
-            case 'unary_relational_expression', ('identifier', 'rename', _), _, Parser.Node() as renames, _, _, Parser.Node() as relation, _ :
-                return Rename(
-                    self.reduce(relation),
-                    self.reduce(renames)
-                )
-            case 'unary_relational_expression', ('identifier', 'compute', _), _, Parser.Node() as computes, _, _, Parser.Node() as relation, _ :
-                return Compute(
-                    self.reduce(relation),
-                    self.reduce(computes)
-                )
-            
-            case 'relation_expression', Parser.Node() as left, Parser.Node(children=[('identifier', str() as operator, _)]), Parser.Node() as right :
-                match operator :
-                    case "union":
-                        return Union(self.reduce(left), self.reduce(right))
-                    case "intersect":
-                        return Intersection(self.reduce(left), self.reduce(right))
-                    case "subtract" | "minus":
-                        return RelationSubtract(self.reduce(left), self.reduce(right))
-                    case "divide":
-                        return RelationDivide(self.reduce(left), self.reduce(right))
-            case 'relation_expression', Parser.Node() as left, Parser.Node() as operator, Parser.Node() as right :
-                match self.reduce(operator) :
-                    case ('join', _, _) as jointype :
-                        return GenericJoin(self.reduce(left), self.reduce(right), jointype) # type: ignore
-                    case 'cartesian_product' :
-                        return CartesianProduct(self.reduce(left), self.reduce(right))
-            
-            case 'inner_relation_expression', _, Parser.Node() as left, Parser.Node(children=[('identifier', str() as operator, _)]), Parser.Node() as right, _ :
-                match operator :
-                    case "union":
-                        return Union(self.reduce(left), self.reduce(right))
-                    case "intersect":
-                        return Intersection(self.reduce(left), self.reduce(right))
-                    case "subtract" | "minus":
-                        return RelationSubtract(self.reduce(left), self.reduce(right))
-                    case "divide":
-                        return RelationDivide(self.reduce(left), self.reduce(right))
-            case 'inner_relation_expression', _, Parser.Node() as left, Parser.Node() as operator, Parser.Node() as right, _ :
-                match self.reduce(operator) :
-                    case ('join', _, _) as jointype :
-                        return GenericJoin(self.reduce(left), self.reduce(right), jointype) # type: ignore
-                    case 'cartesian_product' :
-                        return CartesianProduct(self.reduce(left), self.reduce(right))
-            
-
-
-            case 'cartesian_product', _ :
-                return 'cartesian_product'
-            
-            case 'natural_join', ('identifier', 'join', _) :
-                return ('join', 'natural', 'inner')
-            case 'natural_join', ('identifier', 'outer', _), ('identifier', 'join', _) :
-                return ('join', 'natural', 'outer')
-            case 'natural_join', ('identifier', 'left', _), ('identifier', 'join', _) :
-                return ('join', 'natural', 'left')
-
-            case 'theta_join', Parser.Node() as jointype, _, Parser.Node() as condition, _ :
-                return ('join', self.reduce(condition), self.reduce(jointype)[2])
-
-            case 'identifier_list', Parser.Node() as attribute :
-                return [self.reduce(attribute).attribute_name]
-            case 'identifier_list', Parser.Node() as attribute, Parser.Node() as rest_of_list :
-                return [self.reduce(attribute).attribute_name] + self.reduce(rest_of_list)
-            case 'identifier_list', Parser.Node() as attribute, _, Parser.Node() as rest_of_list :
-                return [self.reduce(attribute).attribute_name] + self.reduce(rest_of_list)
-
-            case 'compute_list', Parser.Node() as compute :
-                return [self.reduce(compute)]
-            case 'compute_list', Parser.Node() as compute, Parser.Node() as rest_of_list :
-                return [self.reduce(compute)] + self.reduce(rest_of_list)
-            case 'compute_list', Parser.Node() as compute, _, Parser.Node() as rest_of_list :
-                return [self.reduce(compute)] + self.reduce(rest_of_list)
-
-            case 'compute', Parser.Node() as expr, _, ('identifier', rename_to, _) :
-                return [self.reduce(expr), rename_to]
-
-            case 'rename_list', Parser.Node() as rename :
-                return self.reduce(rename)
-            case 'rename_list', Parser.Node() as rename, Parser.Node() as rest_of_list :
-                return dict_union(self.reduce(rename), self.reduce(rest_of_list))
-            case 'rename_list', Parser.Node() as rename, _, Parser.Node() as rest_of_list :
-                return dict_union(self.reduce(rename), self.reduce(rest_of_list))
-
-            case 'rename', ('identifier', old, _), _, _, ('identifier', new, _) :
-                return {old: new}
-
-            case 'number', ('number', n, _) :
-                return ScalarLiteral(n)
-            case 'number', ('number', n, _), ('char', '.', _), ('number', m, _) :
-                from math import log10, floor
-                return ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))) )
-            case 'number', ('char', '.', _), ('number', m, _) :
-                from math import log10, floor
-                return ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))) )
-
-
-            case 'additive', Parser.Node() as left, ('char', '+', _), Parser.Node() as right :
-                return Add( self.reduce(left), self.reduce(right) )
-            case 'additive', Parser.Node() as left, ('char', '-', _), Parser.Node() as right :
-                return Subtract( self.reduce(left), self.reduce(right) )
-            case 'multiplicative', Parser.Node() as left, ('char', '*', _), Parser.Node() as right :
-                return Multiply( self.reduce(left), self.reduce(right) )
-            case 'multiplicative', Parser.Node() as left, ('char', '/', _), Parser.Node() as right :
-                return Divide( self.reduce(left), self.reduce(right) )
-            case 'unm', (_, '-', _), Parser.Node() as operand :
-                return Unm(self.reduce(operand))
-
-            case 'additive', ('char', '-', _), Parser.Node() as operand :
-                return Unm(self.reduce(operand))
-
-            case _, ('string_literal', s, _) :
-                return ScalarLiteral(s)        
-
-            case 'condition', Parser.Node() as left, ('char', '=', _), Parser.Node() as right :
-                return Eq(self.reduce(left), self.reduce(right))
-            case 'condition', Parser.Node() as left, ('char', '<', _), Parser.Node() as right :
-                return Less(self.reduce(left), self.reduce(right))
-            case 'condition', Parser.Node() as left, ('char', '>', _), Parser.Node() as right :
-                return Less(self.reduce(right), self.reduce(left))
-            case 'condition', Parser.Node() as left, ('char', '=', _), ('char', '=', _), Parser.Node() as right :
-                return Eq(self.reduce(left), self.reduce(right))
-            case 'condition', Parser.Node() as left, ('char', '<', _), ('char', '=', _), Parser.Node() as right :
-                return Leq(self.reduce(left), self.reduce(right))
-            case 'condition', Parser.Node() as left, ('char', '>', _), ('char', '=', _), Parser.Node() as right :
-                return Leq(self.reduce(right), self.reduce(left))
-
-            case 'disjunct', Parser.Node() as left, (_, 'or', _), Parser.Node() as right :
-                return Or(self.reduce(left), self.reduce(right))
-            case 'conjunct', Parser.Node() as left, (_, 'and', _), Parser.Node() as right :
-                return And(self.reduce(left), self.reduce(right))
-            case 'not', (_, 'not', _), Parser.Node() as operand :
-                return Not(self.reduce(operand))
-
-            case 'boolean_literal', ('identifier', 'false', _) :
-                return ScalarLiteral(False)
-            case 'boolean_literal', ('identifier', 'true', _) :
-                return ScalarLiteral(True)
-
-            case 'attribute', ('identifier', left, _), _, ('identifier', right, _):
-                return NamedAttribute(f"{left}.{right}")
-            case 'attribute', ('identifier', colname, _):
-                return NamedAttribute(colname)
-
-            case 'table_identifier', ('identifier', tablename, _) :
-                return NamedRelation(tablename)
-
-            case _, (_, 'eval', _), Parser.Node() as child :
-                return self.reduce(child)
-            case _, ('char', '(', _), Parser.Node() as child, ('char', ')', _) :
-                return self.reduce(child)
-            case _, Parser.Node() as child:
-                return self.reduce(child)
-            
-            case _, token :
-                assert not isinstance(token, Parser.Node)
 
 from math import log10, floor    
 class SqlTreeReducer:
@@ -2124,16 +1947,16 @@ class SqlTreeReducer:
             case 'condition', Parser.Node() as left, ('char', '>', _), ('char', '=', _), Parser.Node() as right :
                 return Expr.Leq(self.reduce(right), self.reduce(left))
 
-            case 'disjunct', Parser.Node() as left, (_, 'or', _), Parser.Node() as right :
+            case 'disjunct', Parser.Node() as left, (_, 'OR', _), Parser.Node() as right :
                 return Expr.Or(self.reduce(left), self.reduce(right))
-            case 'conjunct', Parser.Node() as left, (_, 'and', _), Parser.Node() as right :
+            case 'conjunct', Parser.Node() as left, (_, 'AND', _), Parser.Node() as right :
                 return Expr.And(self.reduce(left), self.reduce(right))
             case 'not', (_, 'not', _), Parser.Node() as operand :
                 return Expr.Not(self.reduce(operand))
 
-            case 'boolean_literal', ('identifier', 'false', _) :
+            case 'boolean_literal', ('identifier', 'FALSE', _) :
                 return Expr.ScalarLiteral(False)
-            case 'boolean_literal', ('identifier', 'true', _) :
+            case 'boolean_literal', ('identifier', 'TRUE', _) :
                 return Expr.ScalarLiteral(True)
 
             case 'attribute', ('identifier', left, _), _, ('identifier', right, _):
@@ -2223,13 +2046,23 @@ class SqlTreeReducer:
             case 'table_or_subquery', _, Parser.Node() as subquery, _, (_, "AS", _), ('identifier', rename, _) :
                 return SQL.Subquery(self.reduce(subquery), rename)
 
+            case 'join_operator', (_, 'JOIN', _) :
+                return 'INNER'
+            case 'join_operator', (_, jointype, _), (_, 'JOIN', _) :
+                return jointype
 
-            
-                        
-
+            case 'where', _, Parser.Node() as condition :
+                return {"where": self.reduce(condition)}
+            case 'groupby', _, _, Parser.Node() as attribute_list :
+                return {"group_attributes": self.reduce(attribute_list)}
+            case 'having', _, Parser.Node() as condition :
+                return {"having": self.reduce(condition)}
+            case 'orderby', _, _, Parser.Node() as scalar_expressions :
+                return {"order_by": self.reduce(scalar_expressions)}
+            case 'limit', _, Parser.Node() as limit:
+                return {"limit": self.reduce(limit)}
 
             # trivial cases
-
 
             case _, ('char', '(', _), Parser.Node() as child, ('char', ')', _) :
                 return self.reduce(child)
@@ -2260,7 +2093,7 @@ from pprint import pprint
 
 if __name__ == "__main__" :
 
-    document = "SELECT a, count(b) AS num_b FROM c, d INNER JOIN (SELECT h FROM k) AS e ON e.a=c.a"
+    document = "SELECT a, count(b) AS num_b FROM c, d INNER JOIN (SELECT h FROM k) AS e ON e.a=c.a WHERE TRUE GROUP BY A, B HAVING MAX(A)>0 LIMIT 5"
     # document = "SELECT * from a,b,c,d"
     tokens = list(tokenizer(document))
 

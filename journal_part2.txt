@@ -63,6 +63,7 @@ It feels like my grammar is imperfect, but I don't want to change it now. Maybe 
 e.g. there is some weird parallelism in join_clause that could be factored out into two other items or something
 
 also, sometimes i get surprised by how good the grammar sytax hints are:
+
 SyntaxError: did you mean:
 'AS' 
 at '_b FROM c, d INNER JOIN (SELECT h FROM k)' ?
@@ -70,3 +71,34 @@ at '_b FROM c, d INNER JOIN (SELECT h FROM k)' ?
 like, i didnt even realize i made a mistake on this test query
 
 I think i'll take a break after doing WHERE
+
+
+
+Another cool idea i probably won't have time to do, everything in the translator should get a line number so that type errors also can refer to the original input. It would not be hard, since every token has a line number, and i've been ignoring them with underscores, it would just be really tedious
+
+Turns out, all the other fields of SELECT are pretty easy to translate... 
+
+After a break, I need to write some tests to gain confidence in the parser and translator, then i need to start writing the SQL typecheckers. I think expression typechecking already works, the hard part will just be to write the SELECT typechecker. I also will need to use the SQLContext class to manage scope, i think that'll be the clearest way to do it. 
+
+
+Speakinf of scope, i need to figure out how scope should work for joins... Should every table being joined have access to fields of all others? For example, is this a legal expression?
+SELECT * 
+FROM A
+JOIN B ON a.a=b.b
+JOIN C ON c.c=b.b and b.b < a.a
+JOIN D on d.d=c.c and a.a=b.b+d.d
+
+The general case of multiple joins is:
+select(select( ... cross(cross(table, table), ..., table) ... ))
+
+so maybe the optimizer can just figure it out with relational algebra rewriting rules..? Or maybe I should force each join to only be aware of the ones that come before it. 
+
+If i make that assumption (that each join is only aware of the ones before it) then the general multiple join looks instead like:
+select(cross(select(cross( ... ))))
+
+The innermost cross() would be the one between A and B from the example above, and then the innermost select() would be a.a=b.b
+
+If i make this assumption that joins have limited scope (or, like, that joins are applied "sequentially"), then I think there exist some queries that can no longer be represented without a subquery. 
+
+Also, how the hell am i gonna implement anything other than an inner join? left join? outer join? The straight definition of an outer join seems really wasteful
+
