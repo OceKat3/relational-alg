@@ -245,3 +245,6 @@ class MockDatabase(Datbase):
 
     def get_tables():
         return testing data
+
+so that I can test the sql typechecker before implementing the storage engine
+

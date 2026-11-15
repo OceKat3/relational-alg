@@ -582,6 +582,10 @@ def are_types_compatible(a:t_type, b:t_type) -> t_type | None:
     if a == b == bool : return bool
     return None
 
+def sql_isinstance(x, t:t_type):
+    if isinstance(t, tuple):
+        return isinstance(x, str) and len(x) <= t[1]
+    return isinstance(x, t)
 
 @dataclass
 class Table:
@@ -614,31 +618,35 @@ class SQLContext:
         
 class Database:
 
-    def get_tables_by_name(self, names:list[str]) -> Generator[Table | None]:
+    def get_table_by_name(self, name:str) -> Table | None:
         raise NotImplementedError()
-\
+
 
 @dataclass
 class MockDatabaseSchemaOnly(Database):
-    mock_schema: list[Table] = []
+    mock_schema: list[Table]
 
     @staticmethod
-    def from_tables(schema: list[Table]) -> MockDatabaseSchemaOnly:
+    def from_tables(*schema: Table) -> MockDatabaseSchemaOnly:
 
         for table in schema :
             for col in table.schema: 
                 assert col.type == int or (isinstance(col.type, tuple) and col.type[0] == "varchar"), "bad types in mock database"
 
-        return MockDatabaseSchemaOnly(schema)
+        return MockDatabaseSchemaOnly(list(schema))
 
-    def get_tables_by_name(self, names: list[str]) -> Generator[Table | None]:
-        for name in names : 
-            yield next((x for x in self.mock_schema if x.name == name), None)
+    def get_table_by_name(self, name:str) -> Table | None:        
+        return next((x for x in self.mock_schema if x.name == name), None)
 
 class ExecutionContext:
     cur_database: ContextVar[Database | None] = ContextVar('current_database', default=None)
 
-
+    @staticmethod
+    def database() -> Database:
+        db = ExecutionContext.cur_database.get()
+        if db: return db
+        raise ValueError("no database in context")
+    
 class Expr:
 
     class ScalarExpression:
@@ -784,12 +792,12 @@ class Expr:
     @dataclass
     class ScalarLiteral(ScalarExpression):
         val: str | float | int
-        sqltype: type[int] | type[float] | type[str]
+        sqltype: type[int] | type[float] | type[str] | t_varchar
         def eval(self, *a, **kwa) -> int | float | str:
             return self.val
         
         def typecheck(self):
-            if not isinstance(self.val, self.sqltype) : 
+            if not sql_isinstance(self.val, self.sqltype) : 
                 raise TypeError(f"could not be converted to {self.sqltype.__class__.__name__}: {self.val}")
             return self.sqltype
 
@@ -866,8 +874,8 @@ class SQL:
 
 
         aggregated: bool = False
-        out_cols: list[Table.ColDef] = []
-        tables_in_context: list[Table] = []
+        out_cols: list[Table.ColDef] | None = None
+        tables_in_context: list[Table] |None = None
         
         @dataclass
         class Item:
@@ -975,12 +983,13 @@ class SQL:
     @dataclass
     class CommaJoin(SQLNode):
         joinee: SQL.Subquery | SQL.TableName
-        cols_in_common: list[Table.ColDef] = []
+        cols_in_common: list[Table.ColDef] | None = None
         left_table_name:str | None = None
 
         # mutates state of columns in the left table
         def compute_table(self, left_table: Table):
             self.left_table_name = left_table.name
+            self.cols_in_common = []
 
             right_table = self.joinee.typecheck()
             left = dict((c.name, c) for c in left_table.schema)
@@ -1027,18 +1036,26 @@ class SQL:
             for table in SQLContext.tables.get() :
                 if self.table and table.name != self.table : continue
                 for col in table.schema :
+                    if col.hidden : continue
                     if col.name == self.col :
                         yield (table, col)
 
-        def typecheck(self):
-            SQLContext
+        def resolve(self:SQL.Attribute) -> tuple[Table, Table.ColDef]:
+            resolutions = list(self.resolve_all())
+            if len(resolutions) == 1 : return resolutions[0]
+            raise TypeError(f"{self.col} is ambiguous in this context ({', '.join(f"{table.name}.{col.name}" for table,col in resolutions)})")
 
-            if SQLContext.is_aggregate(self) :
+        def typecheck(self):
+
+            if self.is_aggregate() :
                 if SQLContext.in_aggregate_function.get() :
                     raise TypeError(f"cannot access aggregated field {self.col} inside an aggregate function")
                 else:
                     raise TypeError(f"cannot access field {self.col} outside an aggregate function, did you mean to put {self.col} in GROUP BY?")
 
+            table, col = self.resolve()
+
+            return col.type
 
     
     @dataclass
@@ -1046,11 +1063,15 @@ class SQL:
         original_name: str
         rename: str | None = None
         def typecheck(self) -> Table:
-            raise NotImplementedError()
+
+            db = ExecutionContext.database()
+            table = db.get_table_by_name(self.original_name)
+            if not table:
+                raise TypeError(f"table {self.original_name} does not exist")
+            return Table(self.rename or table.name, table.schema)
+            
         @property
         def name(self) -> str: return self.rename or self.original_name 
-
-
         
 
 @dataclass
@@ -2053,80 +2074,83 @@ def dict_union(d1:dict, d2:dict):
 
 from math import log10, floor    
 class SqlTreeReducer:
-    def ast(self, node:Parser.Node) -> AlgebraNode:
+    @classmethod
+    def ast(cls, node:Parser.Node) -> SQL.SQLNode:
 
-        root = self.reduce(node)
-        assert isinstance(root, AlgebraNode)
+        root = cls.reduce(node)
+        assert isinstance(root, SQL.SQLNode)
 
         return root
-
-    def make_sql_tokens_uppercase(self, node:Parser.Node):
+    
+    @classmethod
+    def make_sql_tokens_uppercase(cls, node:Parser.Node):
         for i, (token_or_node, target) in enumerate(zip(node.children, node.item.rule)) :
             if not isinstance(token_or_node, tuple): continue
             kind, data, charpos = token_or_node
             if target.__str__() == target.__str__().upper() and kind != 'number' and isinstance(data, str) :
                 node.children[i] = (kind, data.upper(), charpos)
-
-    def reduce(self, node:Parser.Node) -> Any:
+    
+    @classmethod
+    def reduce(cls, node:Parser.Node) -> Any:
         
-        self.make_sql_tokens_uppercase(node)
+        cls.make_sql_tokens_uppercase(node)
 
         match node.item.goal, *node.children :
 
             # list
             case nonterminal, Parser.Node() as element if nonterminal.endswith('_list') :
-                return [self.reduce(element)]
+                return [cls.reduce(element)]
             case nonterminal, Parser.Node() as element, Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
-                return [self.reduce(element)] + self.reduce(rest_of_list)
+                return [cls.reduce(element)] + cls.reduce(rest_of_list)
             case nonterminal, Parser.Node() as element, _, Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
-                return [self.reduce(element)] + self.reduce(rest_of_list)
+                return [cls.reduce(element)] + cls.reduce(rest_of_list)
 
             # expression grammar
 
             case 'number', ('number', n, _) :
-                return Expr.ScalarLiteral(n, Int)
+                return Expr.ScalarLiteral(n, int)
             case 'number', ('number', n, _), ('char', '.', _), ('number', m, _) :
-                return Expr.ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))), Float )
+                return Expr.ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))), float )
             case 'number', ('char', '.', _), ('number', m, _) :
-                return Expr.ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))), Float )
+                return Expr.ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))), float )
 
 
             case 'additive', Parser.Node() as left, ('char', '+', _), Parser.Node() as right :
-                return Expr.Add( self.reduce(left), self.reduce(right) )
+                return Expr.Add( cls.reduce(left), cls.reduce(right) )
             case 'additive', Parser.Node() as left, ('char', '-', _), Parser.Node() as right :
-                return Expr.Subtract( self.reduce(left), self.reduce(right) )
+                return Expr.Subtract( cls.reduce(left), cls.reduce(right) )
             case 'multiplicative', Parser.Node() as left, ('char', '*', _), Parser.Node() as right :
-                return Expr.Multiply( self.reduce(left), self.reduce(right) )
+                return Expr.Multiply( cls.reduce(left), cls.reduce(right) )
             case 'multiplicative', Parser.Node() as left, ('char', '/', _), Parser.Node() as right :
-                return Expr.Divide( self.reduce(left), self.reduce(right) )
+                return Expr.Divide( cls.reduce(left), cls.reduce(right) )
             case 'unm', (_, '-', _), Parser.Node() as operand :
-                return Expr.Unm(self.reduce(operand))
+                return Expr.Unm(cls.reduce(operand))
 
             case 'additive', ('char', '-', _), Parser.Node() as operand :
-                return Expr.Unm(self.reduce(operand))
+                return Expr.Unm(cls.reduce(operand))
 
             case _, ('string_literal', s, _) :
-                return Expr.ScalarLiteral(s, Varchar(len(s)))        
+                return Expr.ScalarLiteral(s, ("varchar", len(s)))        
 
             case 'condition', Parser.Node() as left, ('char', '=', _), Parser.Node() as right :
-                return Expr.Eq(self.reduce(left), self.reduce(right))
+                return Expr.Eq(cls.reduce(left), cls.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '<', _), Parser.Node() as right :
-                return Expr.Less(self.reduce(left), self.reduce(right))
+                return Expr.Less(cls.reduce(left), cls.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '>', _), Parser.Node() as right :
-                return Expr.Less(self.reduce(right), self.reduce(left))
+                return Expr.Less(cls.reduce(right), cls.reduce(left))
             case 'condition', Parser.Node() as left, ('char', '=', _), ('char', '=', _), Parser.Node() as right :
-                return Expr.Eq(self.reduce(left), self.reduce(right))
+                return Expr.Eq(cls.reduce(left), cls.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '<', _), ('char', '=', _), Parser.Node() as right :
-                return Expr.Leq(self.reduce(left), self.reduce(right))
+                return Expr.Leq(cls.reduce(left), cls.reduce(right))
             case 'condition', Parser.Node() as left, ('char', '>', _), ('char', '=', _), Parser.Node() as right :
-                return Expr.Leq(self.reduce(right), self.reduce(left))
+                return Expr.Leq(cls.reduce(right), cls.reduce(left))
 
             case 'disjunct', Parser.Node() as left, (_, 'OR', _), Parser.Node() as right :
-                return Expr.Or(self.reduce(left), self.reduce(right))
+                return Expr.Or(cls.reduce(left), cls.reduce(right))
             case 'conjunct', Parser.Node() as left, (_, 'AND', _), Parser.Node() as right :
-                return Expr.And(self.reduce(left), self.reduce(right))
+                return Expr.And(cls.reduce(left), cls.reduce(right))
             case 'not', (_, 'not', _), Parser.Node() as operand :
-                return Expr.Not(self.reduce(operand))
+                return Expr.Not(cls.reduce(operand))
 
             case 'boolean_literal', ('identifier', 'FALSE', _) :
                 return Expr.BooleanLiteral(False)
@@ -2141,18 +2165,18 @@ class SqlTreeReducer:
             case "aggregate", (_, "COUNT", _), _, (_, '*', _), _ :
                 return Expr.Count('*')
             case "aggregate", (_, "COUNT", _), _, Parser.Node() as operand, _ :
-                return Expr.Count(self.reduce(operand))
+                return Expr.Count(cls.reduce(operand))
             case "aggregate", (_, "MAX", _), _, Parser.Node() as operand, _ :
-                return Expr.Max(self.reduce(operand))
+                return Expr.Max(cls.reduce(operand))
             case "aggregate", (_, "MIN", _), _, Parser.Node() as operand, _ :
-                return Expr.Min(self.reduce(operand))   
+                return Expr.Min(cls.reduce(operand))   
             case "aggregate", (_, "MIN", _), _, Parser.Node() as operand, _ :
-                return Expr.Avg(self.reduce(operand))   
+                return Expr.Avg(cls.reduce(operand))   
 
             # sql
 
             case 'query', Parser.Node() as left, Parser.Node() as operator, Parser.Node() as right :
-                operator = self.reduce(operator)
+                operator = cls.reduce(operator)
                 match operator:
                     case "UNION":
                         return 
@@ -2175,7 +2199,7 @@ class SqlTreeReducer:
                         case (_, "DISTINCT", _) :
                             args['distinct'] = True
                         case Parser.Node() as node :
-                            result = self.reduce(node)
+                            result = cls.reduce(node)
                             if not isinstance(result, dict): print('huh', result)
                             else:
                                 args.update(result)
@@ -2185,40 +2209,40 @@ class SqlTreeReducer:
             case 'select_result', (_, '*', _) :
                 return {"items": '*'}
             case 'select_result', Parser.Node() as item_list :
-                return {"items": self.reduce(item_list)}
+                return {"items": cls.reduce(item_list)}
             case 'select_item', Parser.Node() as item, (_, 'AS', _), ('identifier', rename, _) :
-                return SQL.Select.Item(self.reduce(item), rename)
+                return SQL.Select.Item(cls.reduce(item), rename)
 
             case 'from', _, Parser.Node() as table_or_subquery :
-                return {"from_table": self.reduce(table_or_subquery)}
+                return {"from_table": cls.reduce(table_or_subquery)}
             case 'from', _, Parser.Node() as table_or_subquery, Parser.Node() as join_clause :
-                joins = self.reduce(join_clause)
+                joins = cls.reduce(join_clause)
                 assert isinstance(joins, list)
-                return {"from_table": self.reduce(table_or_subquery), "from_joins": joins}
+                return {"from_table": cls.reduce(table_or_subquery), "from_joins": joins}
             # this code for the join clause sucks
             case 'join_clause', Parser.Node() as operator, Parser.Node() as table_or_subquery, Parser.Node() as condition :
                 return [SQL.Join(
-                    joinee=self.reduce(table_or_subquery),
-                    on=self.reduce(condition), 
-                    opname=self.reduce(operator)
+                    joinee=cls.reduce(table_or_subquery),
+                    on=cls.reduce(condition), 
+                    opname=cls.reduce(operator)
                     )]
             case 'join_clause', Parser.Node() as operator, Parser.Node() as table_or_subquery, Parser.Node() as condition, Parser.Node() as additional_join:
                 return [SQL.Join(
-                    joinee=self.reduce(table_or_subquery),
-                    on=self.reduce(condition), 
-                    opname=self.reduce(operator)
-                    )] + self.reduce(additional_join)
+                    joinee=cls.reduce(table_or_subquery),
+                    on=cls.reduce(condition), 
+                    opname=cls.reduce(operator)
+                    )] + cls.reduce(additional_join)
             case 'join_clause', ('char', ',', _), Parser.Node() as table_or_subquery :
-                return [SQL.CommaJoin(joinee=self.reduce(table_or_subquery))]
+                return [SQL.CommaJoin(joinee=cls.reduce(table_or_subquery))]
             case 'join_clause', ('char', ',', _), Parser.Node() as table_or_subquery, Parser.Node() as additional_join :
-                return [SQL.CommaJoin(joinee=self.reduce(table_or_subquery))] + self.reduce(additional_join)
+                return [SQL.CommaJoin(joinee=cls.reduce(table_or_subquery))] + cls.reduce(additional_join)
             
             case 'table_or_subquery', ('identifier', tablename, _) :
                 return SQL.TableName(tablename)
             case 'table_or_subquery', ('identifier', tablename, _), ('identifier', 'AS', _), ('identifier', rename) :
                 return SQL.TableName(tablename, rename=rename)
             case 'table_or_subquery', _, Parser.Node() as subquery, _, (_, "AS", _), ('identifier', rename, _) :
-                return SQL.Subquery(self.reduce(subquery), rename)
+                return SQL.Subquery(cls.reduce(subquery), rename)
 
             case 'join_operator', (_, 'JOIN', _) :
                 return 'INNER'
@@ -2226,49 +2250,37 @@ class SqlTreeReducer:
                 return jointype
 
             case 'where', _, Parser.Node() as condition :
-                return {"where": self.reduce(condition)}
+                return {"where": cls.reduce(condition)}
             case 'groupby', _, _, Parser.Node() as attribute_list :
-                return {"group_attributes": self.reduce(attribute_list)}
+                return {"group_attributes": cls.reduce(attribute_list)}
             case 'having', _, Parser.Node() as condition :
-                return {"having": self.reduce(condition)}
+                return {"having": cls.reduce(condition)}
             case 'orderby', _, _, Parser.Node() as scalar_expressions :
-                return {"order_by": self.reduce(scalar_expressions)}
+                return {"order_by": cls.reduce(scalar_expressions)}
             case 'limit', _, Parser.Node() as limit:
-                return {"limit": self.reduce(limit)}
+                return {"limit": cls.reduce(limit)}
 
             # trivial cases
 
             case _, ('char', '(', _), Parser.Node() as child, ('char', ')', _) :
-                return self.reduce(child)
+                return cls.reduce(child)
             case _, Parser.Node() as child:
-                return self.reduce(child)
+                return cls.reduce(child)
             
             case _, token :
                 assert not isinstance(token, Parser.Node)
 
             
 
-def parse_to_ast(document):
-
-    tokens = list(tokenizer(document))
-
-    recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
-    recognizer.earley_recognize()
-
-    parser = Parser(items = recognizer.state_sets, document=recognizer.document)
-    parse_tree = parser.create_tree()
-
-    ast = RelationalTreeReducer().ast(parse_tree)
-
-    return ast
 
 
 from pprint import pprint
 
 if __name__ == "__main__" :
 
-    document = "SELECT a, count(b) AS num_b FROM c, d INNER JOIN (SELECT h FROM k) AS e ON e.a=c.a WHERE TRUE GROUP BY A, B HAVING MAX(A)>0 LIMIT 5"
+    # document = "SELECT a, count(b) AS num_b FROM c, d INNER JOIN (SELECT h FROM k) AS e ON e.a=c.a WHERE TRUE GROUP BY A, B HAVING MAX(A)>0 LIMIT 5"
     # document = "SELECT * from a,b,c,d"
+    document = "SELECT * FROM employees"
     tokens = list(tokenizer(document))
 
     recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
@@ -2279,7 +2291,15 @@ if __name__ == "__main__" :
 
     parse_tree.prettyprint(simple=True)
 
-    sql_ast = SqlTreeReducer().reduce(parse_tree)
+    sql_ast = SqlTreeReducer.ast(parse_tree)
 
     pprint(sql_ast)
+
+    with ExecutionContext.cur_database.set(MockDatabaseSchemaOnly.from_tables(
+        Table(
+            "employees",
+            [Table.ColDef("id", int), Table.ColDef("name", ("varchar", 64))]
+        )
+    )) :
+        pprint(sql_ast.typecheck())
     
