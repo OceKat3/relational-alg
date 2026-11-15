@@ -42,19 +42,19 @@ def ast(document):
 
 def test_parse_translate_select_1():
     test_cases = [
-        "SELECT 1",
-        "SELECT 1;",
-        "SELECT 1; SELECT 1",
-        "SELECT 1; SELECT 1;",
+        "SELECT 1 as n",
+        "SELECT 1 as n;",
+        "SELECT 1 as n; SELECT 1 as n",
+        "SELECT 1 as n; SELECT 1 as n;",
 
         "SELECT * FROM Emp as e, Dept as d WHERE e.did = d.did;"
         "SELECT did, COUNT(*) AS n, AVG(salary) AS avg_sal FROM Emp WHERE age > 25 GROUP BY did HAVING COUNT(*) > 5 ORDER BY n DESC LIMIT 10;",
         "SELECT city FROM Emp UNION SELECT city FROM Dept",
         "SELECT t.did, t.n FROM (SELECT did, COUNT(*) AS n FROM Emp GROUP BY did) AS t WHERE t.n > 3;",
-        "SELECT a e.d a.b+c.d-(-e.f) g AS f h FROM sometable JOIN someothertable USING d LEFT JOIN (select a,b FROM c WHERE d=e) AS asdasd ON a=d GROUP BY a b HAVING c=d",
+        "SELECT a e.d a.b+c.d-(-e.f) AS big_expr g AS f h FROM sometable JOIN someothertable USING d LEFT JOIN (select a,b FROM c WHERE d=e) AS asdasd ON a=d GROUP BY a b HAVING c=d",
 
         "SELECT COUNT(A) AS count_a FROM B;",
-        "SELECT a+b FROM B GROUP BY a;",
+        "SELECT a+b as s FROM B GROUP BY a;",
         "SELECT COUNT(a) AS count_a FROM B",
         "SELECT COUNT(a) AS count_a FROM B GROUP BY a;",
         "SELECT COUNT(a) AS count_a FROM B GROUP BY a;",
@@ -67,6 +67,21 @@ def test_parse_translate_select_1():
     for document in test_cases:
         print(document)
         assert ast(document) is not None
+
+def test_invalid_parses():
+    test_cases = [
+        "SELECT 1",
+        "SELECT a+b FROM A",
+        "SELECT a;;",
+        "CREATE TABLE t",
+        "SELECT COUNT(*) FROM B",
+    ]
+
+    for document in test_cases:
+        print(document)
+        with expect_failure(SyntaxError) :
+            ast(document)
+    
 
 def test_typecheck_select_1():
     document = "SELECT 1 AS n"
@@ -87,6 +102,59 @@ def test_typecheck_select_2():
             sql.typecheck(), 
             [Table.ColDef("a", int), Table.ColDef("b", ("varchar", 64))]
         )
+
+def test_typecheck_select_3():
+    document = "SELECT a AS c FROM A UNION ALL SELECT c FROM B WHERE c>0;"
+    sql = ast(document)
+    assert sql
+    with ExecutionContext.cur_database.set(ABC_DATABASE_SCHEMA) :
+        assert_equal(
+            sql.typecheck(), 
+            [Table.ColDef("c", int)]
+        )
+
+def test_typecheck_select_4():
+    document = "SELECT b FROM A WHERE a>0 GROUP BY A.b"
+    sql = ast(document)
+    assert sql
+    with ExecutionContext.cur_database.set(ABC_DATABASE_SCHEMA) :
+        assert_equal(
+            sql.typecheck(), 
+            [Table.ColDef("b", ("varchar", 64))]
+        )
+
+def test_typecheck_aggregation():
+    valid = [
+        "SELECT b FROM A WHERE a>0 GROUP BY A.b",
+        "SELECT MAX(b) as m AGGREGATE FROM A WHERE a>0",
+        "SELECT 1+MAX(a)-MIN(a) as range AGGREGATE FROM A",
+        "SELECT DISTINCT COUNT(*) as n AGGREGATE FROM A"
+    ]
+    syntaxerror = [
+        "SELECT b AGGREGATE FROM A GROUP BY b"
+    ]
+    typeerror = [
+        "SELECT b AGGREGATE FROM A",
+        "SELECT MAX(MAX(b)) as m AGGREGATE FROM A",
+        "SELECT a FROM A GROUP BY b",
+        "SELECT MAX(a) as m FROM A"
+    ]
+    for document in valid:
+        print(document)
+        sql = ast(document)
+        assert sql
+        with ExecutionContext.cur_database.set(ABC_DATABASE_SCHEMA) :
+            sql.typecheck()
+    for document in syntaxerror:
+        with expect_failure(SyntaxError):
+            sql = ast(document)
+    for document in typeerror:
+        sql = ast(document)
+        assert sql
+        with ExecutionContext.cur_database.set(ABC_DATABASE_SCHEMA) :
+            with expect_failure(TypeError):
+                sql.typecheck()
+            
 
 def test_parse_create_table_1():
     return

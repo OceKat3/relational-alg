@@ -347,7 +347,6 @@ sql_expression_grammar:grammartype = {
 
     "scalar_expression": [
         ["numeric_expression"],
-        ["aggregate"],
         [string_literal],
     ],
 
@@ -380,6 +379,7 @@ sql_expression_grammar:grammartype = {
         [special_char('('), "additive", special_char(')')],
         ["number"],
         ["attribute"],
+        ["aggregate"]
     ],
     "number":[
         [decimal],
@@ -468,10 +468,18 @@ sql_grammar:grammartype = {
             ["orderby"],
             ["limit"]
         ]),
+        *expand_optionals([
+            sql_keyword('SELECT'),
+            [sql_keyword('DISTINCT')],
+            "select_result",
+            [sql_keyword('AGGREGATE')],
+            ["from"],
+            ["where"],
+        ])
     ],
 
     "select_item": [
-        ["scalar_expression"],
+        ["attribute"],
         ["scalar_expression", sql_keyword('AS'), identifier],
     ],
     **listify_nonterminal("select_item"),
@@ -570,7 +578,8 @@ def check_grammar(grammar:grammartype):
                 check_for_left_recursion(l, path)
     check_for_left_recursion(START_SYMBOL)
 
-check_grammar(sql_grammar)
+if __name__ == "__main__" :
+    check_grammar(sql_grammar)
 
 
 
@@ -629,6 +638,7 @@ class SQLContext:
     tables:ContextVar[list[Table]] = ContextVar('sql_context_tables', default=[])
     
     aggregated_attributes:ContextVar[list[SQL.Attribute]] = ContextVar('sql_aggregate_attributes', default=[])
+    in_aggregate_query:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
     in_aggregate_function:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
 
     @contextmanager
@@ -845,36 +855,47 @@ class Expr:
             raise NotImplementedError()
         def flush(self) -> str | int:
             raise NotImplementedError()
-    
+        def typecheck(self) -> Any:
+            if SQLContext.in_aggregate_function.get() :
+                raise TypeError(f"cannot use nested aggregation ({self.__class__.__name__.upper()})")
+             
     class Max(AggregateFunction):
         operand: Expr.ScalarExpression
         def typecheck(self):
-            t = self.operand.typecheck()
-            assert t in [int, float] or stringy_t(t)
-            return t
+            super().typecheck()
+            with SQLContext.in_aggregate_function.set(True):
+                t = self.operand.typecheck()
+                assert t in [int, float] or stringy_t(t)
+                return t
         
         
     class Min(AggregateFunction):
         operand: Expr.ScalarExpression
         def typecheck(self):
-            t = self.operand.typecheck()
-            assert t in [int, float] or stringy_t(t)
-            return t
+            super().typecheck()
+            with SQLContext.in_aggregate_function.set(True):
+                t = self.operand.typecheck()
+                assert t in [int, float] or stringy_t(t)
+                return t
 
     class Avg(AggregateFunction):
         operand: Expr.ScalarExpression
         def typecheck(self):
-            t = self.operand.typecheck()
-            assert t in [int, float]
-            return float
+            super().typecheck()
+            with SQLContext.in_aggregate_function.set(True):
+                t = self.operand.typecheck()
+                assert t in [int, float]
+                return float
 
     @dataclass
     class Count(AggregateFunction):
         operand: Expr.BooleanExpression | Expr.ScalarExpression | Literal['*']
         def typecheck(self):
-            if self.operand == '*' : return int
-            self.operand.typecheck()
-            return int
+            super().typecheck()
+            with SQLContext.in_aggregate_function.set(True):
+                if self.operand == '*' : return int
+                self.operand.typecheck()
+                return int
 
 class SQL:
 
@@ -927,7 +948,7 @@ class SQL:
 
         def typecheck(self) -> list[Table.ColDef]:
 
-            self.aggregated = self.group_attributes is not None
+            self.aggregated = self.aggregated or self.group_attributes is not None
             if not self.aggregated :
                 assert self.having is None, f"cannot use HAVING without a GROUP BY"
 
@@ -957,32 +978,31 @@ class SQL:
                     a.typecheck()
 
                 for join in self.from_joins or [] :
-                    
                     join.typecheck()
                 
                 with SQLContext.aggregated_attributes.set(self.group_attributes or []) :
-
-                    out_cols:list[Table.ColDef] = []
-                    def add_select_item(new_col:Table.ColDef):
-                        if any(c for c in out_cols if c.name == new_col.name) :
-                            raise TypeError(f"duplicate column name: {new_col.name}")
-                        out_cols.append(new_col)
-                    
-                    if self.items == '*' :
-                        for table in tables_in_context :
-                            for col in table.schema :
-                               add_select_item(col) 
-                    else:                
-                        for item in self.items :
-                            if isinstance(item, self.Item) :
-                                add_select_item(item.typecheck())
-                            elif isinstance(item, SQL.Attribute) :
-                                add_select_item(Table.ColDef(item.col, item.typecheck()))
-                            else:
-                                raise TypeError("not a valid select item??", item)
-                    
-                    if self.having: 
-                        self.having.typecheck()
+                    with SQLContext.in_aggregate_query.set(self.aggregated) :
+                        out_cols:list[Table.ColDef] = []
+                        def add_select_item(new_col:Table.ColDef):
+                            if any(c for c in out_cols if c.name == new_col.name) :
+                                raise TypeError(f"duplicate column name in SELECT output: {new_col.name}")
+                            out_cols.append(new_col)
+                        
+                        if self.items == '*' :
+                            for table in tables_in_context :
+                                for col in table.schema :
+                                    add_select_item(col) 
+                        else:                
+                            for item in self.items :
+                                if isinstance(item, self.Item) :
+                                    add_select_item(item.typecheck())
+                                elif isinstance(item, SQL.Attribute) :
+                                    add_select_item(Table.ColDef(item.col, item.typecheck()))
+                                else:
+                                    raise TypeError("not a valid select item??", item)
+                        
+                        if self.having: 
+                            self.having.typecheck()
                     
 
             self.out_cols = out_cols
@@ -1066,12 +1086,16 @@ class SQL:
         col: str
         table: str | None = None
 
-        def is_aggregate(self:SQL.Attribute):
+        def is_in_groupby(self):
             if self.table :
-                return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.table == self.table and x.col == self.col)
+                return any(x for x in SQLContext.aggregated_attributes.get() if x.table == self.table and x.col == self.col)
             else:
-                return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.col == self.col)
+                return any(x for x in SQLContext.aggregated_attributes.get() if x.col == self.col)
     
+
+        def is_aggregation_valid(self:SQL.Attribute):
+            return SQLContext.in_aggregate_function.get() ^ SQLContext.in_aggregate_query.get() ^ self.is_in_groupby()
+            
         def resolve_all(self:SQL.Attribute) -> Generator[tuple[Table, Table.ColDef]]:
             for table in SQLContext.tables.get() :
                 if self.table and table.name != self.table : continue
@@ -1087,13 +1111,19 @@ class SQL:
 
         def typecheck(self):
 
-            if self.is_aggregate() :
+            table, col = self.resolve()
+            self.table = table.name
+
+            if self.is_aggregation_valid() :
+                print(self)
+
+                if not SQLContext.in_aggregate_query.get() :
+                    raise TypeError(f"cannot aggregate {self.col} when not in an aggregate query. use SELECT ... AGGREGATE FROM, or SELECT ... GROUP BY")
+
                 if SQLContext.in_aggregate_function.get() :
                     raise TypeError(f"cannot access aggregated field {self.col} inside an aggregate function")
                 else:
                     raise TypeError(f"cannot access field {self.col} outside an aggregate function, did you mean to put {self.col} in GROUP BY?")
-
-            table, col = self.resolve()
 
             return col.type
 
@@ -2277,6 +2307,8 @@ class SqlTreeReducer:
                     match c:
                         case (_, "DISTINCT", _) :
                             args['distinct'] = True
+                        case (_, "AGGREGATE", _) :
+                            args['aggregated'] = True
                         case Parser.Node() as node :
                             result = cls.reduce(node)
                             if not isinstance(result, dict): print('huh', result)
@@ -2359,7 +2391,7 @@ if __name__ == "__main__" :
 
     # document = "SELECT a, count(b) AS num_b FROM c, d INNER JOIN (SELECT h FROM k) AS e ON e.a=c.a WHERE TRUE GROUP BY A, B HAVING MAX(A)>0 LIMIT 5"
     # document = "SELECT * from a,b,c,d"
-    document = "SELECT * FROM employees;"
+    document = "SELECT 1;"
     tokens = list(tokenizer(document))
 
     recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
@@ -2373,12 +2405,4 @@ if __name__ == "__main__" :
     sql_ast = SqlTreeReducer.ast(parse_tree)
 
     pprint(sql_ast)
-
-    with ExecutionContext.cur_database.set(MockDatabaseSchemaOnly.from_tables(
-        Table(
-            "employees",
-            [Table.ColDef("id", int), Table.ColDef("name", ("varchar", 64))]
-        )
-    )) :
-        pprint(sql_ast.typecheck())
-    
+    sql_ast.typecheck()

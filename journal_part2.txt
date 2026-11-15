@@ -254,3 +254,29 @@ so that I can test the sql typechecker before implementing the storage engine
 typechecking works!!!! I think I'm gonna start writing tests now to build some confidence in the typechecker. i remember writing a few sample test cases. 
 
 I'm making a decision for set operators (which i have not implemented until now) that they will be really permissive. If the two schemas don't exactly match then the set operator will just take whatever columns are shared. something something postel's law
+
+Also making another big decision (which i kinda already made, but is now enshrined in the grammar): there are no anonymous output fields in a SELECT. So, for example, "SELECT 1;" is an error because 1 needs to be given a name. "SELECT 1 as n;" is correct tho
+This just makes my life easier, and I don't want to autogenerate column names for the user, or work with anonymous columns.
+
+So any expression more complicated than an attribute (col or table.col) needs to be given a name with AS. (that is, any expression which does not have an obvious name)
+
+
+
+Hmm okay aggregation is getting complicated again. The SQLContext.in_aggregate_function is not sufficient maybe, i just need to think it through
+
+in a regular SQL query you can use any attribute anywhere, because it's not in GROUP BY and it's also not in an aggregate function. 
+in an aggregate SQL query (without group by) you can only use aggregate functions in the output, it's the same as having group by nothing. So attributes don't work because the query is aggregate but they are not aggregated and not in an aggregate function
+in an aggregate SQL query with groupby, then you can use the grouped attributes outside of an aggregate function, and the non-grouped attributes inside an aggregate function. You also can't use grouped attributes inside an aggregate function
+
+so basically i think: 
+(is_aggregate_query xor is_aggregate_attribute xor is_in_aggregate_function) must be equal to False
+
+But this means I need to determine whether or not a query is aggregated....
+"SELECT a FROM A GROUP BY a" is an aggregate query because it has GROUP BY
+
+but also "SELECT MAX(a) FROM A" is aggregated despite not having a groupby. Also "SELECT 1+MAX(a) FROM A" is aggregated despite the toplevel item not being an aggregate function.
+
+Maybe, if any of the select items contain an aggregate function anywhere in their tree, then the whole select is aggregated? Or maybe i force the user to use an AGGREGATE keyword whenever they don't specify GROUP BY 
+
+I think the real solution would be to update my type system to make types depend on wheter or not they're aggregated, but I'm really short for time so I'm just gonna force the user to write AGGREGATE. Still no dependent types...
+
