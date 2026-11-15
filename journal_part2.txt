@@ -248,3 +248,7 @@ class MockDatabase(Datbase):
 
 so that I can test the sql typechecker before implementing the storage engine
 
+
+
+
+typechecking works!!!! I think I'm gonna start writing tests now to build some confidence in the typechecker. i remember writing a few sample test cases. 

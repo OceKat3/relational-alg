@@ -273,12 +273,26 @@ def expand_optionals(production: list[str | Terminal | list[str | Terminal]]) ->
                 out_production.append(x)
         yield out_production
 
-def listify_nonterminal(element: str, separator:str | Terminal = special_char(','), separator_optional:bool = True, recursion="right") -> grammartype:
-    productions:list[list[str | Terminal]] = [[element], [element + "_list", separator, element], [element + "_list", element]]
+def listify_nonterminal(
+        element: str, 
+        separator:str | Terminal = special_char(','), 
+        separator_optional:bool = True, 
+        allow_separator_at_end:bool = False,
+        recursion="right"
+    ) -> grammartype:
+    productions:list[list[str | Terminal]] = [
+        [element], 
+        [element + "_list", separator, element], 
+        [element + "_list", element]
+    ]
+    if recursion == "left":
+        print("warning, left recursion is really bad lol")
     if recursion == "right":
         productions = [x[::-1] for x in productions]
     if not separator_optional :
         productions.pop()
+    if allow_separator_at_end :
+        productions.append([element, separator])
     return {(element + "_list"): productions}
 
 assert list(expand_optionals(["a", ["b", "c"], "d", ["e"]])) == [["a", "d"], ["a", "b", "c", "d"], ["a", "d", "e"], ["a", "b", "c", "d", "e"]]
@@ -389,13 +403,14 @@ sql_expression_grammar:grammartype = {
 sql_grammar:grammartype = {
     **sql_expression_grammar,
 
-    START_SYMBOL: [["input"]],
+    START_SYMBOL: [["statement_list"]],
 
-    "input": [
-        ["statement"],
-        ["statement", special_char(';')],
-        ["statement", special_char(';'), "input"]
-    ],
+    # "input": [
+    #     ["statement"],
+    #     ["statement", special_char(';')],
+    #     ["statement", special_char(';'), "input"]
+    # ],
+    **listify_nonterminal("statement", separator=special_char(';'), separator_optional=False, allow_separator_at_end=True),
 
     "statement": [
         ["create_table"],
@@ -855,6 +870,16 @@ class SQL:
     class SQLNode:
         def typecheck(self) -> Any:
             raise NotImplementedError()
+
+    @dataclass
+    class ChainStatements(SQLNode):
+
+        statements: list[SQL.Select | SQL.CreateTable | SQL.Insert]
+
+        def typecheck(self):
+            for statement in self.statements[:-1] :
+                statement.typecheck()
+            return self.statements[-1].typecheck()
 
     class Query(SQLNode):
         def typecheck(self) -> list[Table.ColDef]:
@@ -2075,10 +2100,13 @@ def dict_union(d1:dict, d2:dict):
 from math import log10, floor    
 class SqlTreeReducer:
     @classmethod
-    def ast(cls, node:Parser.Node) -> SQL.SQLNode:
+    def ast(cls, node:Parser.Node) -> SQL.SQLNode | None:
 
-        root = cls.reduce(node)
-        assert isinstance(root, SQL.SQLNode)
+        statements = cls.reduce(node)
+        assert isinstance(statements, list)
+        if len(statements) == 0 : return None
+        
+        root = SQL.ChainStatements(statements)
 
         return root
     
@@ -2102,9 +2130,10 @@ class SqlTreeReducer:
                 return [cls.reduce(element)]
             case nonterminal, Parser.Node() as element, Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
                 return [cls.reduce(element)] + cls.reduce(rest_of_list)
-            case nonterminal, Parser.Node() as element, _, Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
+            case nonterminal, Parser.Node() as element, (_, _, _), Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
                 return [cls.reduce(element)] + cls.reduce(rest_of_list)
-
+            case nonterminal, Parser.Node() as element, (_, _, _), if nonterminal.endswith('_list') :
+                return [cls.reduce(element)]
             # expression grammar
 
             case 'number', ('number', n, _) :
@@ -2280,7 +2309,7 @@ if __name__ == "__main__" :
 
     # document = "SELECT a, count(b) AS num_b FROM c, d INNER JOIN (SELECT h FROM k) AS e ON e.a=c.a WHERE TRUE GROUP BY A, B HAVING MAX(A)>0 LIMIT 5"
     # document = "SELECT * from a,b,c,d"
-    document = "SELECT * FROM employees"
+    document = "SELECT * FROM employees;"
     tokens = list(tokenizer(document))
 
     recognizer = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
