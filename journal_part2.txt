@@ -280,3 +280,8 @@ Maybe, if any of the select items contain an aggregate function anywhere in thei
 
 I think the real solution would be to update my type system to make types depend on wheter or not they're aggregated, but I'm really short for time so I'm just gonna force the user to write AGGREGATE. Still no dependent types...
 
+
+Alright, now that a bunch of test cases are passing for JOINs, I think I need to quickly get CREATE TABLE and INSERT translation done. That is, translating from parse trees to SQL abstract syntax trees. After that, I need to start working on the relational algebra logical and physical plans. seven hours left.... hopefully the storage engine will not be too hard
+
+
+

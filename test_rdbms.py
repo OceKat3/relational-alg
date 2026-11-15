@@ -15,6 +15,23 @@ ABC_DATABASE_SCHEMA = MockDatabaseSchemaOnly.from_tables(
     ]
 )
 
+
+COMPANY_DATABASE_SCHEMA = MockDatabaseSchemaOnly.from_tables(
+    employees=[
+        ("eid", int),
+        ("managerid", int),
+        ("name", ("varchar", 64)), 
+    ],
+    employee_departments=[
+        ("eid", int),
+        ("did", ("varchar",10))
+    ],
+    departments=[
+        ("did", ("varchar", 10)),
+        ("deptname", ("varchar", 128)),
+    ]
+)
+
 @contextmanager
 def expect_failure(*errors: type[BaseException]):
     
@@ -51,7 +68,7 @@ def test_parse_translate_select_1():
         "SELECT did, COUNT(*) AS n, AVG(salary) AS avg_sal FROM Emp WHERE age > 25 GROUP BY did HAVING COUNT(*) > 5 ORDER BY n DESC LIMIT 10;",
         "SELECT city FROM Emp UNION SELECT city FROM Dept",
         "SELECT t.did, t.n FROM (SELECT did, COUNT(*) AS n FROM Emp GROUP BY did) AS t WHERE t.n > 3;",
-        "SELECT a e.d a.b+c.d-(-e.f) AS big_expr g AS f h FROM sometable JOIN someothertable USING d LEFT JOIN (select a,b FROM c WHERE d=e) AS asdasd ON a=d GROUP BY a b HAVING c=d",
+        "SELECT a e.d a.b+c.d-(-e.f) AS big_expr g AS f h FROM sometable JOIN someothertable ON d=h LEFT JOIN (select a,b FROM c WHERE d=e) AS asdasd ON a=d GROUP BY a b HAVING c=d",
 
         "SELECT COUNT(A) AS count_a FROM B;",
         "SELECT a+b as s FROM B GROUP BY a;",
@@ -152,6 +169,35 @@ def test_typecheck_aggregation():
         sql = ast(document)
         assert sql
         with ExecutionContext.cur_database.set(ABC_DATABASE_SCHEMA) :
+            with expect_failure(TypeError):
+                sql.typecheck()
+
+def test_typecheck_joins():
+    valid = [
+        "SELECT employees.eid, departments.did FROM employees, employee_departments, departments",
+        "SELECT eid, did FROM employees, employee_departments, departments",
+        "SELECT employees.name, managers.name AS manager_name FROM employees INNER JOIN employees AS managers ON employees.managerid = managers.eid"
+    ]
+    syntaxerror = [
+        "SELECT * FROM (SELECT * from departments)"
+    ]
+    typeerror = [
+        "SELECT name FROM employees, employees",
+        "SELECT employees.name, managers.name FROM employees INNER JOIN employees AS managers ON employees.managerid = managers.eid"
+    ]
+    for document in valid:
+        print(document)
+        sql = ast(document)
+        assert sql
+        with ExecutionContext.cur_database.set(COMPANY_DATABASE_SCHEMA) :
+            sql.typecheck()
+    for document in syntaxerror:
+        with expect_failure(SyntaxError):
+            sql = ast(document)
+    for document in typeerror:
+        sql = ast(document)
+        assert sql
+        with ExecutionContext.cur_database.set(COMPANY_DATABASE_SCHEMA) :
             with expect_failure(TypeError):
                 sql.typecheck()
             

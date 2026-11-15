@@ -511,7 +511,6 @@ sql_grammar:grammartype = {
     ],
     "join_condition": [
         [sql_keyword('ON'), "boolean_expression"],
-        [sql_keyword('USING'), "identifier_list"],
     ],
 
     "where": [[sql_keyword('WHERE'), "boolean_expression"]],
@@ -985,7 +984,7 @@ class SQL:
                         out_cols:list[Table.ColDef] = []
                         def add_select_item(new_col:Table.ColDef):
                             if any(c for c in out_cols if c.name == new_col.name) :
-                                raise TypeError(f"duplicate column name in SELECT output: {new_col.name}")
+                                raise TypeError(f"SELECT output contains ambiguous columns: {new_col.name}. Use AS to disambiguate")
                             out_cols.append(new_col)
                         
                         if self.items == '*' :
@@ -1096,19 +1095,30 @@ class SQL:
         def is_aggregation_valid(self:SQL.Attribute):
             return SQLContext.in_aggregate_function.get() ^ SQLContext.in_aggregate_query.get() ^ self.is_in_groupby()
             
-        def resolve_all(self:SQL.Attribute) -> Generator[tuple[Table, Table.ColDef]]:
+        def resolve_all(self:SQL.Attribute, check_hidden=False) -> Generator[tuple[Table, Table.ColDef]]:
             for table in SQLContext.tables.get() :
                 if self.table and table.name != self.table : continue
                 for col in table.schema :
-                    if col.hidden : continue
+                    if col.hidden and not check_hidden : continue
                     if col.name == self.col :
                         yield (table, col)
 
         def resolve(self:SQL.Attribute) -> tuple[Table, Table.ColDef]:
             resolutions = list(self.resolve_all())
-            if len(resolutions) == 1 : return resolutions[0]
-            raise TypeError(f"{self.col} is ambiguous in this context ({', '.join(f"{table.name}.{col.name}" for table,col in resolutions)})")
 
+            if len(resolutions) == 0 :
+                resolutions = list(self.resolve_all(check_hidden=True))
+
+            if len(resolutions) == 1 : return resolutions[0]
+            if len(resolutions) == 0 : 
+                available_attributes: list[str] = [
+                    f"{table.name}.{col.name}"
+                    for table in SQLContext.tables.get()
+                    for col in table.schema
+                ]
+                raise TypeError(f"{self.col} could not be found in this context (available: {available_attributes})")
+            raise TypeError(f"{self.col} is ambiguous in this context ({', '.join(f"{table.name}.{col.name}" for table,col in resolutions)})")
+            
         def typecheck(self):
 
             table, col = self.resolve()
@@ -2194,8 +2204,11 @@ class SqlTreeReducer:
         statements = [x for x in cls.reduce(node) if x is not None]
         assert isinstance(statements, list)
         if len(statements) == 0 : return None
-        
-        root = SQL.ChainStatements(statements)
+
+        if len(statements) == 1 :
+            return statements.pop()
+        else:
+            root = SQL.ChainStatements(statements)
 
         return root
     
@@ -2347,10 +2360,12 @@ class SqlTreeReducer:
                 return [SQL.CommaJoin(joinee=cls.reduce(table_or_subquery))]
             case 'join_clause', ('char', ',', _), Parser.Node() as table_or_subquery, Parser.Node() as additional_join :
                 return [SQL.CommaJoin(joinee=cls.reduce(table_or_subquery))] + cls.reduce(additional_join)
+            case 'join_condition', _, Parser.Node() as condition :
+                return cls.reduce(condition)
             
             case 'table_or_subquery', ('identifier', tablename, _) :
                 return SQL.TableName(tablename)
-            case 'table_or_subquery', ('identifier', tablename, _), ('identifier', 'AS', _), ('identifier', rename) :
+            case 'table_or_subquery', ('identifier', tablename, _), ('identifier', 'AS', _), ('identifier', rename, _) :
                 return SQL.TableName(tablename, rename=rename)
             case 'table_or_subquery', _, Parser.Node() as subquery, _, (_, "AS", _), ('identifier', rename, _) :
                 return SQL.Subquery(cls.reduce(subquery), rename)
