@@ -102,3 +102,75 @@ If i make this assumption that joins have limited scope (or, like, that joins ar
 
 Also, how the hell am i gonna implement anything other than an inner join? left join? outer join? The straight definition of an outer join seems really wasteful
 
+
+
+
+^ just checked the assignment and we are not expected to implement left/outer joins it seems. So for now I won't worry about implementing them
+
+I'm gettin ga little frustrated right now because I'm rewriting the typechecker to use custom types instead of default python types like int/str/bool
+
+class SQLType:
+    width: int | None = None
+    python_type: type
+    serializable = False
+
+    def __str__(self) -> str:
+        return self.__class__.__name__.lower()
+
+class Int(SQLType):
+    width = 8
+    python_type = int
+    serializable = True
+
+class Float(SQLType):
+    python_type = float
+    serializable = False
+
+@dataclass
+class Varchar(SQLType):
+    width: int | None = None
+    MAX_WIDTH = 255
+    python_type = str
+
+    @property
+    def serializable(self): return self.width is not None and self.width < Varchar.MAX_WIDTH
+
+class Bool(SQLType):
+    width = 1
+    python_type = bool
+    serializable = False
+
+type ValidSqlType = type[Int]|type[Float]|type[Bool]|Varchar
+^ this is whats pissing me off because varchar is the only one that has instances
+
+def sql_type_from_python_type(t:type) -> SQLType:
+    TYPE_MAP = {
+        int: Int,
+        float: Float,
+        str: Varchar,
+        bool: Bool
+    }
+    if t not in TYPE_MAP : raise TypeError(f"{t} could not be converted to a sql type")
+    return TYPE_MAP[t]
+
+lowk i didnt actually have to do that but maybe itll make my life easier when doing like create table or temporary files for external sort.... uggghhhhhhhhhhhhh
+
+literally the only difference is that varchar has an integer width parameter, whcih i was doing with some tuple bullshit like tuple[str, int] instead. 
+
+it also does help to have a place to write functions like an integer or string serializer, but lowk i would write those in the storage module anyway so it doesnt matter
+
+now that i think and write about it i realize that was a really stupid decision, i'm going back to python types and tuple bullshit for varchars
+the storage engine and typechecker can figure their shit out... maybe i can even do something cool like class Varchar(str), inheriting from a builtin type
+ugghhhhh
+
+no Varchar(str) is not gonna work, goddddd i love dependent type theory
+https://open.spotify.com/track/72Mi1N7F11uQXGKUYraNYN
+
+it's better if i just handle varchar(n) as a special case instead of trying to figure out a good way to do dependent types in python at 1am
+
+
+type t_varchar = tuple[Literal["varchar"], int]
+
+def typecheck(self) -> type[int]|type[float]|type[str]|t_varchar:
+
+a solution, not the best but it will work

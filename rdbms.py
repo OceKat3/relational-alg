@@ -565,13 +565,15 @@ from typing import Any
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+type t_varchar = tuple[Literal["varchar"], int]
+
 @dataclass
 class Table:
 
     @dataclass
     class ColDef:
         name: str
-        type: Literal["int"] | tuple[Literal["varchar"], int]
+        type: type[int]|type[float]|type[bool]|type[str]|t_varchar
 
     name: str
     schema: list[ColDef]
@@ -601,21 +603,25 @@ class SQLContext:
 
     @contextmanager
     @staticmethod
-    def sql_table_in_scope(*tables: Table):
+    def tables_in_scope(*tables: Table):
         with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
             yield
 
     
     
 def is_any(inst, *types) -> bool :
-    return any(isinstance(int, t) for t in types)
+    return any(isinstance(inst, t) for t in types)
+
+def stringy_t(x): return x == str or isinstance(x, tuple)
+
+type t_varchar = tuple[Literal["varchar"], int]
 
 class Expr:
 
     class ScalarExpression:
         def eval(self, *a, **kwa) -> int | float | str:
             raise NotImplementedError()
-        def typecheck(self) -> type[int] | type[float] | type[str]:
+        def typecheck(self) -> type[int]|type[float]|type[str]|t_varchar:
             raise NotImplementedError()
 
     class BooleanExpression:
@@ -629,7 +635,6 @@ class Expr:
         left:Expr.ScalarExpression
         right:Expr.ScalarExpression
 
-        allowed_types = [int, float]
         verb:str = ''
         def operation(self, x, y) -> int | float | str : raise NotImplementedError()
 
@@ -642,18 +647,33 @@ class Expr:
                 self.right.eval(*a, **kwa)
             )
 
-        def typecheck(self) -> Any:
+        def typecheck(self) -> type[int]|type[float]|type[str]|t_varchar:
             left = self.left.typecheck()
             right = self.right.typecheck()
 
-            assert left == right, f"cannot {self.verb} {left} and {right}"
-            assert left in self.allowed_types, f"cannot {self.verb} {left}"
-            return left
+            if left in [int, float] and right in [int, float] :
+                return float
+            if left == int and right == int :
+                return int
+            raise TypeError(f"cannot {self.verb} {left} and {right}")
 
     class Add(BinaryScalarExpression):
         operation = lambda self, x, y : x+y
         verb = 'add'
-        allowed_types = [int, float, str]
+        def typecheck(self):
+            left = self.left.typecheck()
+            right = self.right.typecheck()
+
+            if left in [int, float] and right in [int, float] :
+                return float
+            if left == int and right == int :
+                return int
+            if isinstance(left, tuple) and isinstance(right, tuple) :
+                return ("varchar", left[1] + right[1])
+            if stringy_t(left) and stringy_t(right) :
+                return str
+
+            raise TypeError(f"cannot {self.verb} {left} and {right}")
     class Subtract(BinaryScalarExpression):
         operation = lambda self, x, y : x-y
         verb = 'subtract'
@@ -667,13 +687,11 @@ class Expr:
     @dataclass
     class Unm(ScalarExpression):
         arg:Expr.ScalarExpression
-        def eval(self, *a, **kwa) -> int | float | str:
+        def eval(self, *a, **kwa) -> int | float:
             arg = self.arg.eval(*a, **kwa)
-            if not (isinstance(arg, int) or isinstance(arg, float)) :
-                raise TypeError(f'Cannot negate a {type(arg)}')
-            return -arg
+            return -arg #type: ignore
         
-        def typecheck(self) -> type[int] | type[float] | type[str]:
+        def typecheck(self):
             t = self.arg.typecheck()
             assert t in [int, float], f"cannot negate {t} (unary minus)"
             return t
@@ -693,12 +711,13 @@ class Expr:
                 left, right 
             )
 
-        def typecheck(self) -> type[bool]:
+        def typecheck(self):
             left = self.left.typecheck()
             right = self.right.typecheck()
-            assert left == right, f"cannot compare ({self.__class__.__name__}) {left} and {right}"
-            return bool
-
+            if left in [int, float] and right in [int, float] : return bool
+            if stringy_t(left) and stringy_t(right) : return bool
+            raise TypeError(f"cannot compare ({self.__class__.__name__}) {left} and {right}")
+            
     class Eq(BinaryCondition):
         operation = lambda self, x, y : x == y
     class Less(BinaryCondition):
@@ -717,7 +736,7 @@ class Expr:
             return self.operation(
                 self.left.eval(*a, **kwa), self.right.eval(*a, **kwa)
             )
-        def typecheck(self) -> type[bool]:
+        def typecheck(self):
             left = self.left.typecheck()
             right = self.right.typecheck()
             assert left == right == bool, "how did this happen gerbert"
@@ -734,7 +753,7 @@ class Expr:
 
         def eval(self, *a, **kwa) -> bool:
             return not self.operand.eval(*a, **kwa)
-        def typecheck(self) -> type[bool]:
+        def typecheck(self):
             t = self.operand.typecheck()
             assert t == bool, "how did this happen gerbert"
             return bool
@@ -742,11 +761,14 @@ class Expr:
     @dataclass
     class ScalarLiteral(ScalarExpression):
         val: str | float | int
+        sqltype: type[int] | type[float] | type[str]
         def eval(self, *a, **kwa) -> int | float | str:
             return self.val
         
-        def typecheck(self) -> type[int] | type[float] | type[str]:
-            return type(self.val)
+        def typecheck(self):
+            if not isinstance(self.val, self.sqltype) : 
+                raise TypeError(f"could not be converted to {self.sqltype.__class__.__name__}: {self.val}")
+            return self.sqltype
 
     @dataclass
     class BooleanLiteral(BooleanExpression):
@@ -754,7 +776,8 @@ class Expr:
         def eval(self, *a, **kwa) -> bool:
             return self.val
         
-        def typecheck(self) -> type[bool]:
+        def typecheck(self):
+            assert isinstance(self.val, bool)
             return bool
 
     @dataclass
@@ -769,7 +792,7 @@ class Expr:
         operand: Expr.ScalarExpression
         def typecheck(self):
             t = self.operand.typecheck()
-            assert t in [int, float, str]
+            assert t in [int, float] or stringy_t(t)
             return t
         
         
@@ -777,7 +800,7 @@ class Expr:
         operand: Expr.ScalarExpression
         def typecheck(self):
             t = self.operand.typecheck()
-            assert t in [int, float, str]
+            assert t in [int, float] or stringy_t(t)
             return t
 
     class Avg(AggregateFunction):
@@ -792,8 +815,7 @@ class Expr:
         operand: Expr.BooleanExpression | Expr.ScalarExpression | Literal['*']
         def typecheck(self):
             if self.operand == '*' : return int
-            t = self.operand.typecheck()
-            assert t in [int, ]
+            self.operand.typecheck()
             return int
 
 class SQL:
@@ -809,7 +831,7 @@ class SQL:
         
     @dataclass
     class Select(Query):
-        items: list[Item | SQL.Attribute] | Literal['*']
+        items: list[Item] | Literal['*']
         distinct: bool = False
         from_table: SQL.TableName | SQL.Subquery | None = None
         from_joins: list[SQL.Join] | None = None
@@ -818,15 +840,58 @@ class SQL:
         having: Expr.BooleanExpression | None = None
         order_by: list[Expr.ScalarExpression] | None = None
         limit: int | None = None
-
+        aggregated: bool = False
         @dataclass
         class Item:
             value: Expr.ScalarExpression
             rename: str | None
+            def typecheck(self) -> Table.ColDef:
+                if isinstance(self.value, SQL.Attribute) :
+                    return Table.ColDef(self.rename or self.value.col, self.value.typecheck())
+                if self.rename is None :
+                    raise TypeError("complex expressions in SELECT must be given a name")
+                return Table.ColDef(self.rename, self.value.typecheck())
 
         def typecheck(self) -> list[Table.ColDef]:
-            # TODO check for ambiguity in self joins i.e. table names unique
-            pass
+
+            self.aggregated = self.group_attributes is not None
+            if not self.aggregated :
+                assert self.having is None, f"cannot use HAVING without a GROUP BY"
+
+            tables_in_context: list[Table] = []
+            if self.from_table :
+                tables_in_context.append(self.from_table.typecheck())
+            for join in self.from_joins or [] :
+                joinee_table = join.joinee.typecheck()
+                if any(t for t in tables_in_context if t.name == joinee_table.name) :
+                    raise TypeError(f"table name not unique: {joinee_table.name}")
+                tables_in_context.append(joinee_table)
+
+
+            with SQLContext.tables_in_scope(*tables_in_context) :
+                if self.where : self.where.typecheck()
+                
+                with SQLContext.is_aggregate.set(self.aggregated) :
+
+                    out_cols:list[Table.ColDef] = []
+                    def add_col(new_col:Table.ColDef):
+                        if any(c for c in out_cols if c.name == col.name) :
+                            raise TypeError(f"duplicate column name: {new_col.name}")
+                        out_cols.append(new_col)
+                    
+                    if self.items == '*' :
+                        for table in tables_in_context :
+                            for col in table.schema :
+                               add_col(col) 
+                    else:                
+                        for item in self.items :
+                            assert isinstance(item, self.Item)
+                            col = item.typecheck()
+                            add_col(col)
+
+                    if self.having: 
+                        # with SQLContext.tables_in_scope(Table(name="", schema=out_cols))
+                        self.having.typecheck()
     
     @dataclass
     class Subquery(SQLNode):
@@ -835,10 +900,12 @@ class SQL:
 
         def typecheck(self) -> Table:
             assert self.rename is not None
-            return Table(
-                self.rename,
-                self.query.typecheck()
-            )
+            #no correlated subqueries
+            with SQLContext.tables.set([]) :
+                return Table(
+                    self.rename,
+                    self.query.typecheck()
+                )
     
     @dataclass
     class Join(SQLNode):
@@ -846,8 +913,7 @@ class SQL:
         opname: Literal["INNER"] | Literal["LEFT"] | Literal["CROSS"]
         on: Expr.BooleanExpression
 
-        def typecheck(self) -> Table:
-            assert self.on.typecheck() == bool
+        def typecheck(self) -> None:
             pass
 
     # natural inner join
@@ -1910,11 +1976,11 @@ class SqlTreeReducer:
             # expression grammar
 
             case 'number', ('number', n, _) :
-                return Expr.ScalarLiteral(n)
+                return Expr.ScalarLiteral(n, Int)
             case 'number', ('number', n, _), ('char', '.', _), ('number', m, _) :
-                return Expr.ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))) )
+                return Expr.ScalarLiteral( float(n) + float(m) * (10) ** (-(1 + floor(log10(m)))), Float )
             case 'number', ('char', '.', _), ('number', m, _) :
-                return Expr.ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))) )
+                return Expr.ScalarLiteral( float(m) * (10) ** (-(1 + floor(log10(m)))), Float )
 
 
             case 'additive', Parser.Node() as left, ('char', '+', _), Parser.Node() as right :
@@ -1932,7 +1998,7 @@ class SqlTreeReducer:
                 return Expr.Unm(self.reduce(operand))
 
             case _, ('string_literal', s, _) :
-                return Expr.ScalarLiteral(s)        
+                return Expr.ScalarLiteral(s, Varchar(len(s)))        
 
             case 'condition', Parser.Node() as left, ('char', '=', _), Parser.Node() as right :
                 return Expr.Eq(self.reduce(left), self.reduce(right))
@@ -1955,9 +2021,9 @@ class SqlTreeReducer:
                 return Expr.Not(self.reduce(operand))
 
             case 'boolean_literal', ('identifier', 'FALSE', _) :
-                return Expr.ScalarLiteral(False)
+                return Expr.BooleanLiteral(False)
             case 'boolean_literal', ('identifier', 'TRUE', _) :
-                return Expr.ScalarLiteral(True)
+                return Expr.BooleanLiteral(True)
 
             case 'attribute', ('identifier', left, _), _, ('identifier', right, _):
                 return SQL.Attribute(table=left, col=right)
