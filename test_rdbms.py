@@ -203,7 +203,6 @@ def test_typecheck_joins():
             
 
 def test_parse_create_table_1():
-    return
     test_cases = [
         "CREATE TABLE employees (id NUM name VARCHAR password VARCHAR(64))",
         "CREATE TABLE employees (id NUM, name VARCHAR, password VARCHAR(64))",
@@ -212,8 +211,24 @@ def test_parse_create_table_1():
     for document in test_cases:
         assert ast(document) is not None
 
+def test_typecheck_create_table_1():
+    test_cases = [
+            "CREATE TABLE employees (id NUM name VARCHAR password VARCHAR(64))",
+            "CREATE TABLE employees (id NUM, name VARCHAR, password VARCHAR(64))",
+        ]
+    
+    for document in test_cases:
+        with ExecutionContext.cur_database.set(MockDatabaseSchemaOnly.from_tables()) :
+            sql = ast(document)
+            assert sql is not None
+            sql.typecheck()
+        with expect_failure(TypeError):
+            with ExecutionContext.cur_database.set(COMPANY_DATABASE_SCHEMA) :
+                sql = ast(document)
+                assert sql is not None
+                sql.typecheck()
+
 def test_parse_insert_1():
-    return
     test_cases = [   
         'INSERT INTO employees VALUES (1, 2, 3), ("A", "B", "asdasdasdasdasd"), (1,2,3,4,5,6,7,8,9)'
     ]

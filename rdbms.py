@@ -446,7 +446,7 @@ sql_grammar:grammartype = {
         ],
         [
             sql_keyword('INSERT'), sql_keyword('INTO'), identifier,
-            special_char('('), "attribute_list", special_char(')'),
+            special_char('('), "identifier_list", special_char(')'),
             sql_keyword('VALUES'), "tuple_literal_list"
         ]
     ],
@@ -1073,11 +1073,25 @@ class SQL:
         def typecheck(self) -> None:
             pass
 
+    @dataclass
     class Insert(SQLNode):
-        pass
-    class CreateTable(SQLNode):
-        pass
+        into: str
+        data: list[list[int | str]]
 
+        cols: list[str] | None = None
+        
+        into_table: Table | None = None
+
+        def typecheck(self) -> Any:
+            return super().typecheck()
+        
+    @dataclass
+    class CreateTable(SQLNode):
+        tablename: str
+        coldefs: list[Table.ColDef]
+
+        def typecheck(self) -> Any:
+            return super().typecheck()
 
     
     @dataclass
@@ -2385,6 +2399,25 @@ class SqlTreeReducer:
                 return {"order_by": cls.reduce(scalar_expressions)}
             case 'limit', _, Parser.Node() as limit:
                 return {"limit": cls.reduce(limit)}
+
+            case 'create_table', _, _, ('identifier', tablename, _), _, Parser.Node() as column_def_list, _ :
+                return SQL.CreateTable(tablename, cls.reduce(column_def_list))
+            case 'column_def', ('identifier', col_name, _), Parser.Node() as col_type :
+                return Table.ColDef(col_name, cls.reduce(col_type))
+            case 'type', (_, 'NUM', _) :
+                return int
+            case 'type', (_, 'VARCHAR', _) :
+                return ("varchar", 255)
+            case 'type', (_, 'VARCHAR', _), _, ('number', width, _), _ :
+                return ("varchar", width)
+
+            case 'insert', _, _, ('identifier', tablename, _), (_, 'VALUES', _), Parser.Node() as tuple_literal_list :
+                return SQL.Insert(into=tablename, data=cls.reduce(tuple_literal_list))
+            case 'insert', _, _, ('identifier', tablename, _), _, Parser.Node() as identifier_list, _, (_, 'VALUES', _), Parser.Node() as tuple_literal_list :
+                return SQL.Insert(into=tablename, data=cls.reduce(tuple_literal_list), cols=cls.reduce(identifier_list))
+
+            case 'tuple_literal', _, Parser.Node() as tuple_elements, _ :
+                return cls.reduce(tuple_elements)
 
             # trivial cases
 
