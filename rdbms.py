@@ -586,34 +586,18 @@ def are_types_compatible(a:t_type, b:t_type) -> t_type | None:
 @dataclass
 class Table:
 
+    name: str
+    schema: list[ColDef]
+
     @dataclass
     class ColDef:
         name: str
         type: t_type
+        hidden: bool = False
 
         def __hash__(self) -> int:
             return (self.name, getattr(self.type, '__name__', self.type)).__hash__()
 
-    name: str
-    schema: list[ColDef]
-
-    def blocks(self) -> Generator[list[tuple]]:
-        raise NotImplementedError()
-
-    @staticmethod
-    def get_tables(names:list[str]):
-        return [Table.get_table(n) for n in names]
-
-    @staticmethod
-    def get_table(name:str):
-        # TODO
-        return {
-            
-        }[name]
-
-    @staticmethod
-    def create_table(name:str, schema):
-        pass
 
 class SQLContext:
 
@@ -627,16 +611,32 @@ class SQLContext:
     def tables_in_scope(*tables: Table):
         with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
             yield
+        
+class Database:
+
+    def get_tables_by_name(self, names:list[str]) -> Generator[Table | None]:
+        raise NotImplementedError()
+\
+
+@dataclass
+class MockDatabaseSchemaOnly(Database):
+    mock_schema: list[Table] = []
 
     @staticmethod
-    def is_aggregate(attribute:SQL.Attribute):
-        if attribute.table :
-            return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.table == attribute.table and x.col == attribute.col)
-        else:
-            return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.col == attribute.col)
-    
-    
+    def from_tables(schema: list[Table]) -> MockDatabaseSchemaOnly:
 
+        for table in schema :
+            for col in table.schema: 
+                assert col.type == int or (isinstance(col.type, tuple) and col.type[0] == "varchar"), "bad types in mock database"
+
+        return MockDatabaseSchemaOnly(schema)
+
+    def get_tables_by_name(self, names: list[str]) -> Generator[Table | None]:
+        for name in names : 
+            yield next((x for x in self.mock_schema if x.name == name), None)
+
+class ExecutionContext:
+    cur_database: ContextVar[Database | None] = ContextVar('current_database', default=None)
 
 
 class Expr:
@@ -867,6 +867,7 @@ class SQL:
 
         aggregated: bool = False
         out_cols: list[Table.ColDef] = []
+        tables_in_context: list[Table] = []
         
         @dataclass
         class Item:
@@ -933,14 +934,13 @@ class SQL:
                             add_select_item(col)
 
                     if self.having: 
-                        # with SQLContext.tables_in_scope(Table(name="", schema=out_cols))
                         self.having.typecheck()
                     
 
             self.out_cols = out_cols
+            self.tables_in_context = tables_in_context
             return out_cols
                     
-    
     @dataclass
     class Subquery(SQLNode):
         query: SQL.Query
@@ -975,11 +975,16 @@ class SQL:
     @dataclass
     class CommaJoin(SQLNode):
         joinee: SQL.Subquery | SQL.TableName
-        cols_in_common: list[str] | None = None
+        cols_in_common: list[Table.ColDef] = []
+        left_table_name:str | None = None
 
-        def compute_table(self, left_side: Table):
-            left = dict((c.name, c.type) for c in left_side.schema)
-            right = dict((c.name, c.type) for c in left_side.schema)
+        # mutates state of columns in the left table
+        def compute_table(self, left_table: Table):
+            self.left_table_name = left_table.name
+
+            right_table = self.joinee.typecheck()
+            left = dict((c.name, c) for c in left_table.schema)
+            right = dict((c.name, c) for c in right_table.schema)
 
             key_overlap = set(left.keys()).intersection(right.keys())
 
@@ -987,11 +992,15 @@ class SQL:
                 raise TypeError(f"comma join failed on {self.joinee.name}, no shared column names")
 
             for shared_colname in key_overlap :
-                resultant_type = are_types_compatible(left[shared_colname], right[shared_colname])
+                resultant_type = are_types_compatible(left[shared_colname].type, right[shared_colname].type)
                 if not resultant_type:
                     # TODO give the user a warning?
-                    pass
+                    continue
                 self.cols_in_common.append(Table.ColDef(shared_colname, resultant_type))
+                left[shared_colname].hidden = True
+                right[shared_colname].type = resultant_type
+            
+            return right_table
 
         def typecheck(self) -> None:
             pass
@@ -1008,6 +1017,30 @@ class SQL:
         col: str
         table: str | None = None
 
+        def is_aggregate(self:SQL.Attribute):
+            if self.table :
+                return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.table == self.table and x.col == self.col)
+            else:
+                return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.col == self.col)
+    
+        def resolve_all(self:SQL.Attribute) -> Generator[tuple[Table, Table.ColDef]]:
+            for table in SQLContext.tables.get() :
+                if self.table and table.name != self.table : continue
+                for col in table.schema :
+                    if col.name == self.col :
+                        yield (table, col)
+
+        def typecheck(self):
+            SQLContext
+
+            if SQLContext.is_aggregate(self) :
+                if SQLContext.in_aggregate_function.get() :
+                    raise TypeError(f"cannot access aggregated field {self.col} inside an aggregate function")
+                else:
+                    raise TypeError(f"cannot access field {self.col} outside an aggregate function, did you mean to put {self.col} in GROUP BY?")
+
+
+    
     @dataclass
     class TableName(SQLNode):
         original_name: str

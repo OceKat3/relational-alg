@@ -228,5 +228,20 @@ Hmm... comma joins also change how name resolution works. I could completely ign
 It would suck for the user but make implementation somewhat simpler...
 
 For the sake of time, and after realizing what a nightmare name resolution will be, i'm just gonna spend a bit of time trying to implement comma joins, and then maybe revert afterwards if i don't like it.
+(originally this sentence said "i'm gonna omit comma joins" but here i am lol)
 
 The simplest solution i could think of would involve adding a Table.ColDef.hidden bool attribute, which is only ever True when a coldef is the left side of a comma join. 
+I don't like this solution since it requires holding onto some state... Tables and Table.ColDefs are no longer immutable. I just have to be really sure to only ever call typecheck() once on each object, and pass around these table objects carefully.
+
+
+OH also i have to write down some ideas:
+
+class Database:
+    current_database: ContextVar[Database]
+
+    def get_tables ........
+
+class MockDatabase(Datbase):
+
+    def get_tables():
+        return testing data
