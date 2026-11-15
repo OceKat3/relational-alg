@@ -614,9 +614,15 @@ class Table:
         type: t_type
         hidden: bool = False
 
+        def __repr__(self) -> str:
+            return (self.name, getattr(self.type, '__name__', self.type)).__repr__()
         def __hash__(self) -> int:
-            return (self.name, getattr(self.type, '__name__', self.type)).__hash__()
-
+            return self.__repr__().__hash__()
+        def __eq__(self, other: object) -> bool:
+            if isinstance(other, Table.ColDef) :
+                return self.__repr__() == other.__repr__()
+            else :
+                return False
 
 class SQLContext:
 
@@ -642,13 +648,19 @@ class MockDatabaseSchemaOnly(Database):
     mock_schema: list[Table]
 
     @staticmethod
-    def from_tables(*schema: Table) -> MockDatabaseSchemaOnly:
+    def from_tables(**schema: list[tuple[str, t_type]]) -> MockDatabaseSchemaOnly:
 
-        for table in schema :
-            for col in table.schema: 
-                assert col.type == int or (isinstance(col.type, tuple) and col.type[0] == "varchar"), "bad types in mock database"
+        for tablename, coldefs in schema.items() :
+            for name, type in coldefs: 
+                assert type == int or (isinstance(type, tuple) and type[0] == "varchar"), "bad types in mock database"
 
-        return MockDatabaseSchemaOnly(list(schema))
+        return MockDatabaseSchemaOnly([
+            Table(
+                tablename,
+                [Table.ColDef(*t) for t in coldefs]
+            )
+            for tablename, coldefs in schema.items()
+        ])
 
     def get_table_by_name(self, name:str) -> Table | None:        
         return next((x for x in self.mock_schema if x.name == name), None)
@@ -887,7 +899,7 @@ class SQL:
         
     @dataclass
     class Select(Query):
-        items: list[Item] | Literal['*']
+        items: list[Item | SQL.Attribute] | Literal['*']
         distinct: bool = False
         from_table: SQL.TableName | SQL.Subquery | None = None
         from_joins: list[SQL.Join | SQL.CommaJoin] | None = None
@@ -952,7 +964,7 @@ class SQL:
 
                     out_cols:list[Table.ColDef] = []
                     def add_select_item(new_col:Table.ColDef):
-                        if any(c for c in out_cols if c.name == col.name) :
+                        if any(c for c in out_cols if c.name == new_col.name) :
                             raise TypeError(f"duplicate column name: {new_col.name}")
                         out_cols.append(new_col)
                     
@@ -962,10 +974,13 @@ class SQL:
                                add_select_item(col) 
                     else:                
                         for item in self.items :
-                            assert isinstance(item, self.Item)
-                            col = item.typecheck()
-                            add_select_item(col)
-
+                            if isinstance(item, self.Item) :
+                                add_select_item(item.typecheck())
+                            elif isinstance(item, SQL.Attribute) :
+                                add_select_item(Table.ColDef(item.col, item.typecheck()))
+                            else:
+                                raise TypeError("not a valid select item??", item)
+                    
                     if self.having: 
                         self.having.typecheck()
                     
@@ -1097,7 +1112,51 @@ class SQL:
             
         @property
         def name(self) -> str: return self.rename or self.original_name 
-        
+
+    @dataclass
+    class SetOperator(SQLNode):
+        left: SQL.Query
+        right: SQL.Query
+        operator: Literal['UNION'] | Literal['UNION ALL'] | Literal['INTERSECT'] | Literal['EXCEPT']
+
+        shared_cols: list[Table.ColDef] | None = None
+
+        def check_schemas_compatible(self, left:list[Table.ColDef], right:list[Table.ColDef]):
+            left_nameset = set(c.name for c in left)
+            right_nameset = set(c.name for c in left)
+
+            shared_names = left_nameset.intersection(right_nameset)
+
+            if len(shared_names) == 0 :
+                raise TypeError(f"cannot {self.operator}, no column names in common")
+
+            shared_cols:list[Table.ColDef] = []
+
+            for n in shared_names :
+                left_col = next(c for c in left if c.name == n)
+                right_col = next(c for c in right if c.name == n)
+
+                resultant_type = are_types_compatible(left_col.type, right_col.type)
+                if resultant_type :
+                    shared_cols.append(Table.ColDef(n, resultant_type))
+
+            if len(shared_cols) == 0 :
+                raise TypeError(f"cannot {self.operator}, columns do not have compatible types: f{shared_names}")
+
+            self.shared_cols = shared_cols
+            return shared_cols
+
+        def typecheck(self) -> list[Table.ColDef]:
+            left = self.left.typecheck()
+            right = self.right.typecheck()
+            assert self.operator in ['UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT']
+
+            return self.check_schemas_compatible(left, right)
+            
+
+
+            
+
 
 @dataclass
 class Relation:
@@ -1600,7 +1659,7 @@ class CartesianProduct(BinaryRelationalExpression):
 
 
 
-from typing import Literal, Generator
+from typing import Literal, Generator, Iterable
 
 type Token = tuple[Literal['string_literal'] | Literal['identifier'] | Literal['char'], str, int] \
     | tuple[Literal['number'], int, int]
@@ -2102,7 +2161,7 @@ class SqlTreeReducer:
     @classmethod
     def ast(cls, node:Parser.Node) -> SQL.SQLNode | None:
 
-        statements = cls.reduce(node)
+        statements = [x for x in cls.reduce(node) if x is not None]
         assert isinstance(statements, list)
         if len(statements) == 0 : return None
         
@@ -2205,16 +2264,7 @@ class SqlTreeReducer:
             # sql
 
             case 'query', Parser.Node() as left, Parser.Node() as operator, Parser.Node() as right :
-                operator = cls.reduce(operator)
-                match operator:
-                    case "UNION":
-                        return 
-                    case "UNION ALL":
-                        return
-                    case "INTERSECT":
-                        return
-                    case "EXCLUDE":
-                        return
+                return SQL.SetOperator(cls.reduce(left), cls.reduce(right), cls.reduce(operator))
             case 'binary_relational_operator', (_, s, _) : 
                 return s
             case 'binary_relational_operator', (_, "UNION", _), (_, "ALL", _) : 
