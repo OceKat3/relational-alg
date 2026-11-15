@@ -214,3 +214,19 @@ Then I need to turn SQL into relational algebra, which might be really hard or m
 and then finally I need to write a storage engine and hook it up to the relational algebra and to TableName. I'm saving the storage engine for last since i'm convinced it'll be easy, mostly since i'm not implementing any efficient indexes
 
 
+
+I've had a chance to think about comma joins... 
+
+https://stackoverflow.com/questions/48054868/understanding-natural-join-in-sql
+someone in this stackoverflow says "Don't use natural joins. Don't bother learning natural joins. They are an abomination."
+i think they make a pretty good argument, at least requiring the keyword 'USING'
+
+I would like to remove comma joins to simplify my code (at little expense to the language), but the assignment specification asks that we implement comma joins so i'll keep them. It'll just be some really gross code in SQL.Select.typecheck
+
+Hmm... comma joins also change how name resolution works. I could completely ignore it and just force people to specify table names in their comma joins. e.g. SELECT employees.employee_id from employees, departments;
+
+It would suck for the user but make implementation somewhat simpler...
+
+For the sake of time, and after realizing what a nightmare name resolution will be, i'm just gonna spend a bit of time trying to implement comma joins, and then maybe revert afterwards if i don't like it.
+
+The simplest solution i could think of would involve adding a Table.ColDef.hidden bool attribute, which is only ever True when a coldef is the left side of a comma join. 

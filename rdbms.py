@@ -567,13 +567,32 @@ from contextvars import ContextVar
 
 type t_varchar = tuple[Literal["varchar"], int]
 
+type t_type = type[int]|type[float]|type[bool]|type[str]|t_varchar
+
+def is_any(inst, *types) -> bool :
+    return any(isinstance(inst, t) for t in types)
+
+def stringy_t(x): return x == str or isinstance(x, tuple)
+
+def are_types_compatible(a:t_type, b:t_type) -> t_type | None:
+    if a == b == int : return int
+    if a in [int, float] and b in [int, float] : return float
+    if isinstance(a, tuple) and isinstance(b, tuple) : return ("varchar", a[1]+b[1])
+    if stringy_t(a) and stringy_t(b) : return str
+    if a == b == bool : return bool
+    return None
+
+
 @dataclass
 class Table:
 
     @dataclass
     class ColDef:
         name: str
-        type: type[int]|type[float]|type[bool]|type[str]|t_varchar
+        type: t_type
+
+        def __hash__(self) -> int:
+            return (self.name, getattr(self.type, '__name__', self.type)).__hash__()
 
     name: str
     schema: list[ColDef]
@@ -617,12 +636,8 @@ class SQLContext:
             return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.col == attribute.col)
     
     
-def is_any(inst, *types) -> bool :
-    return any(isinstance(inst, t) for t in types)
 
-def stringy_t(x): return x == str or isinstance(x, tuple)
 
-type t_varchar = tuple[Literal["varchar"], int]
 
 class Expr:
 
@@ -870,11 +885,20 @@ class SQL:
             if not self.aggregated :
                 assert self.having is None, f"cannot use HAVING without a GROUP BY"
 
+            if self.from_joins :
+                assert self.from_table, "how...."
+
             tables_in_context: list[Table] = []
             if self.from_table :
                 tables_in_context.append(self.from_table.typecheck())
             for join in self.from_joins or [] :
-                joinee_table = join.joinee.typecheck()
+                if isinstance(join, SQL.CommaJoin):
+                    joinee_table = join.compute_table(tables_in_context[-1])    
+                elif isinstance(join, SQL.Join):
+                    joinee_table = join.compute_table()
+                else:
+                    raise TypeError("")
+                
                 if any(t for t in tables_in_context if t.name == joinee_table.name) :
                     raise TypeError(f"table name not unique: {joinee_table.name}")
                 tables_in_context.append(joinee_table)
@@ -930,12 +954,18 @@ class SQL:
                     self.rename,
                     self.query.typecheck()
                 )
+        @property
+        def name(self) : 
+            return self.rename
     
     @dataclass
     class Join(SQLNode):
         joinee: SQL.Subquery | SQL.TableName
         opname: Literal["INNER"] | Literal["LEFT"] | Literal["CROSS"]
         on: Expr.BooleanExpression
+
+        def compute_table(self):
+            return self.joinee.typecheck()
 
         def typecheck(self) -> None:
             assert self.on.typecheck() == bool
@@ -946,6 +976,22 @@ class SQL:
     class CommaJoin(SQLNode):
         joinee: SQL.Subquery | SQL.TableName
         cols_in_common: list[str] | None = None
+
+        def compute_table(self, left_side: Table):
+            left = dict((c.name, c.type) for c in left_side.schema)
+            right = dict((c.name, c.type) for c in left_side.schema)
+
+            key_overlap = set(left.keys()).intersection(right.keys())
+
+            if len(key_overlap) == 0 :
+                raise TypeError(f"comma join failed on {self.joinee.name}, no shared column names")
+
+            for shared_colname in key_overlap :
+                resultant_type = are_types_compatible(left[shared_colname], right[shared_colname])
+                if not resultant_type:
+                    # TODO give the user a warning?
+                    pass
+                self.cols_in_common.append(Table.ColDef(shared_colname, resultant_type))
 
         def typecheck(self) -> None:
             pass
