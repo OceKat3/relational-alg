@@ -54,3 +54,19 @@ Yesterday I started writing a bit of the sql translator function (SqlTreeReducer
 Now that I'm working on typechecking I'm starting to feel really good about it. I'm writing typechecks with assertions right now but (TODO) typechecks should probably raise TypeErrors instead of AssertionErrors
 
 The idea is: typecheck will raise if anything is incorrect, which will blow up the whole recursive call. Otherwise, if everything is okay, the typecheck function returns some information about the type. either int/bool/str or a Table instance or a list of ColDefs, stuff like that. 
+
+
+
+So far I'm really happy with how SQL parsing is going!! Most of the work is getting the select statement to work. I had some trouble figuring out how to do the table_or_subquery grammar item but i ended up just making a Subquery class. I was thinking of maybe making a RenameTable class instead... that wouldn't be helpful tho, i think. 
+
+It feels like my grammar is imperfect, but I don't want to change it now. Maybe if I had more time to do this assignment I would make a cleaner grammar, or maybe I should have just copied the entire SQLite grammar. But it's not horrible either. 
+e.g. there is some weird parallelism in join_clause that could be factored out into two other items or something
+
+also, sometimes i get surprised by how good the grammar sytax hints are:
+SyntaxError: did you mean:
+'AS' 
+at '_b FROM c, d INNER JOIN (SELECT h FROM k)' ?
+
+like, i didnt even realize i made a mistake on this test query
+
+I think i'll take a break after doing WHERE

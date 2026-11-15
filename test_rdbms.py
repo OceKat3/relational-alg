@@ -21,3 +21,6 @@ for document in test_cases:
 
 
 "SELECT COUNT(A) FROM B;" # this should fail because aggregate values need to be renamed
+"SELECT a+b FROM B;" # for the same reason this should fail typecheck
+
+"SELECT a FROM B JOIN B ON b1=b2" #should fail typecheck due to an ambiguous self join
