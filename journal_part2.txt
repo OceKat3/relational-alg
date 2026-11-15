@@ -174,3 +174,43 @@ type t_varchar = tuple[Literal["varchar"], int]
 def typecheck(self) -> type[int]|type[float]|type[str]|t_varchar:
 
 a solution, not the best but it will work
+
+
+shit this is also the part where i don't do corrleated subqueries
+
+
+i think i need to think about the general form of a SQL select in relational algebra, because i'm not really sure how to typecheck GROUP BY and HAVING...
+
+without aggregation, a sql select is:
+
+order(project(select(compute(limit(relation)))))
+
+order and limit are pretty obvious. select comes from WHERE and project/compute come from the select items
+
+with aggregation, a sql select is:
+
+order(limit(
+            HAVING
+    project(select[aggregate]((groupby[cols](
+        WHERE
+        select[not aggregate](relation)
+    ))))
+))
+
+maybe it makes sense for whatever groupby node to incorporate everything in one, select, having, and group by all in the same node.
+
+I also didn't take into account that only some columns are aggregated... so in a GROUP BY context, some columns should have SQLContext.is_aggregate and some should not. maybe it's just easier to make a list like SQLContext.aggregated_attributes and then make SQLContext.is_aggregate a function
+
+
+
+
+For tomorrow: i need to figure out how to deal with comma joins (where do i check and store all the column names which are the same? does the comma join get turned into an equi-join?), and I need to deal with group by / having. 
+I need to finally write the Attribute typecheck, which will be relatively simple. Check that the attribute is not ambiguous, check that it exists, return its type. I also need to hook up the TableName typecheck, but it won't work until the storage engine is done.
+
+I should be able to typecheck some SELECT statements after that. Then I need to write the translator and typecheckers for CREATE TABLE and INSERT. I will try to keep both of those super duper simple because time is very limited
+
+Then I need to turn SQL into relational algebra, which might be really hard or maybe itll be really easy. the hard part will probably be writing the new algebra nodes, and figuring out how to deal with group by / havin
+
+and then finally I need to write a storage engine and hook it up to the relational algebra and to TableName. I'm saving the storage engine for last since i'm convinced it'll be easy, mostly since i'm not implementing any efficient indexes
+
+

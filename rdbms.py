@@ -599,7 +599,9 @@ class Table:
 class SQLContext:
 
     tables:ContextVar[list[Table]] = ContextVar('sql_context_tables', default=[])
-    is_aggregate:ContextVar[bool] = ContextVar('sql_is_aggregate', default=False)
+    
+    aggregated_attributes:ContextVar[list[SQL.Attribute]] = ContextVar('sql_aggregate_attributes', default=[])
+    in_aggregate_function:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
 
     @contextmanager
     @staticmethod
@@ -607,6 +609,12 @@ class SQLContext:
         with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
             yield
 
+    @staticmethod
+    def is_aggregate(attribute:SQL.Attribute):
+        if attribute.table :
+            return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.table == attribute.table and x.col == attribute.col)
+        else:
+            return SQLContext.in_aggregate_function.get() ^ any(x for x in SQLContext.aggregated_attributes.get() if x.col == attribute.col)
     
     
 def is_any(inst, *types) -> bool :
@@ -834,13 +842,17 @@ class SQL:
         items: list[Item] | Literal['*']
         distinct: bool = False
         from_table: SQL.TableName | SQL.Subquery | None = None
-        from_joins: list[SQL.Join] | None = None
+        from_joins: list[SQL.Join | SQL.CommaJoin] | None = None
         where: Expr.BooleanExpression | None = None
         group_attributes: list[SQL.Attribute] | None = None
         having: Expr.BooleanExpression | None = None
         order_by: list[Expr.ScalarExpression] | None = None
         limit: int | None = None
+
+
         aggregated: bool = False
+        out_cols: list[Table.ColDef] = []
+        
         @dataclass
         class Item:
             value: Expr.ScalarExpression
@@ -870,11 +882,18 @@ class SQL:
 
             with SQLContext.tables_in_scope(*tables_in_context) :
                 if self.where : self.where.typecheck()
+
+                for a in self.group_attributes or [] :
+                    a.typecheck()
+
+                for join in self.from_joins or [] :
+                    
+                    join.typecheck()
                 
-                with SQLContext.is_aggregate.set(self.aggregated) :
+                with SQLContext.aggregated_attributes.set(self.group_attributes or []) :
 
                     out_cols:list[Table.ColDef] = []
-                    def add_col(new_col:Table.ColDef):
+                    def add_select_item(new_col:Table.ColDef):
                         if any(c for c in out_cols if c.name == col.name) :
                             raise TypeError(f"duplicate column name: {new_col.name}")
                         out_cols.append(new_col)
@@ -882,16 +901,21 @@ class SQL:
                     if self.items == '*' :
                         for table in tables_in_context :
                             for col in table.schema :
-                               add_col(col) 
+                               add_select_item(col) 
                     else:                
                         for item in self.items :
                             assert isinstance(item, self.Item)
                             col = item.typecheck()
-                            add_col(col)
+                            add_select_item(col)
 
                     if self.having: 
                         # with SQLContext.tables_in_scope(Table(name="", schema=out_cols))
                         self.having.typecheck()
+                    
+
+            self.out_cols = out_cols
+            return out_cols
+                    
     
     @dataclass
     class Subquery(SQLNode):
@@ -914,12 +938,17 @@ class SQL:
         on: Expr.BooleanExpression
 
         def typecheck(self) -> None:
-            pass
+            assert self.on.typecheck() == bool
+            assert self.opname in ["INNER", "LEFT", "CROSS"], f"invalid join, {self.opname}"
 
     # natural inner join
     @dataclass
     class CommaJoin(SQLNode):
-        joinee: SQL.Select | SQL.TableName
+        joinee: SQL.Subquery | SQL.TableName
+        cols_in_common: list[str] | None = None
+
+        def typecheck(self) -> None:
+            pass
 
     class Insert(SQLNode):
         pass
