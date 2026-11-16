@@ -1,4 +1,5 @@
-from rdbms import Recognizer, Parser, tokenizer, sql_grammar, SqlTreeReducer, MockDatabaseSchemaOnly, ExecutionContext, Table
+from rdbms import Recognizer, Parser, tokenizer, sql_grammar, SqlTreeReducer, MockDatabaseSchemaOnly, ExecutionContext, Table, InMemoryDatabase
+
 from pprint import pformat, pprint
 from contextlib import contextmanager
 # testing utils
@@ -277,6 +278,28 @@ def test_typecheck_insert_into_2():
                 sql = ast(document)
                 assert sql is not None
                 sql.typecheck()
+
+
+
+
+def test_memory_db_1():
+
+    db = InMemoryDatabase()
+
+    employees = COMPANY_DATABASE_SCHEMA.get_table_by_name('employees')
+    assert employees
+
+    serializer = db.get_tuple_serializer(employees.schema)
+    deserializer = db.get_tuple_deserializer(employees.schema)
+
+    assert_equal(len(serializer((1,2,"a"))), 4+4+2+1)
+
+    for tup in [(1,2,"a"), (100,400,"c")]:
+        assert_equal(
+            deserializer(serializer(tup)),
+            tup
+        )
+
 
 
 "SELECT COUNT(a) FROM B" # this should fail because a is not aggregated

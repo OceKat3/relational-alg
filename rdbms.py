@@ -498,6 +498,8 @@ class InMemoryFilesystem:
     BLOCK_SIZE = 4096
     
     files: dict[str, list[bytearray]]
+    def __init__(self) -> None:
+        self.files = {}
 
     def create_file(self, name:str):
         if name in self.files :
@@ -665,13 +667,17 @@ class InMemoryDatabase(Database):
         InMemoryDatabase.SlottedPage(self.fs.get_file(table.name)[0]).initialize(0)
 
     @staticmethod
-    def get_tuple_deserializer(schema:tuple[type[int]|type[str], ...]) -> Callable[[bytes], tuple]:
+    def get_tuple_deserializer(schema:list[Table.ColDef]) -> Callable[[bytes], tuple]:
+
+        immutable_schema:tuple[type[int]|type[str], ...] = tuple(
+            int if c.type is int else str for c in schema
+        )
 
         def deserializer(record:bytes):
             i = 0
             out:list[int|str] = []
-            for tuple_index, t in enumerate(schema) :
-                if i >= len(record): raise IOError
+            for t in immutable_schema :
+                # if i >= len(record): raise IOError
                 if t is int:
                     out.append(int.from_bytes(record[i:i+4], **INTCONFIG))
                     i += 4
@@ -687,12 +693,16 @@ class InMemoryDatabase(Database):
         return deserializer
 
     @staticmethod
-    def get_tuple_serializer(schema:tuple[type[int]|type[str], ...]) -> Callable[[tuple[int|str,...]], bytes]:
+    def get_tuple_serializer(schema:list[Table.ColDef]) -> Callable[[tuple[int|str,...]], bytes]:
+
+        immutable_schema:tuple[type[int]|type[str], ...] = tuple(
+            int if c.type is int else str for c in schema
+        )
 
         def serializer(tup:tuple[int|str,...]):
             out = bytes().join(
                 int.to_bytes(x, **INTCONFIG, length=4) if t is int else int.to_bytes(len(x), **INTCONFIG, length=2)+bytes(x, encoding="utf-8") # type:ignore
-                for t, x in zip(schema, tup)
+                for t, x in zip(immutable_schema, tup)
             )
             return out
             
@@ -1380,7 +1390,7 @@ class Executor:
         table: Table
 
     class Scan:
-
+        pass
 
 
             
