@@ -299,3 +299,13 @@ I also just noticed that my sql is superior to the assignment in the sense that 
 
 
 
+Really I'm just stuck on optimization.... I don't have a good mental model of how optimization will actually work. I also don't know the granularity in which I want to turn SELECT into relational stuff.. the assignment says to use select, project, rename, but really there is an entire rename/project/compute thing going on in sql SELECT all at once
+
+The storage engine specification never explains what a "pinned" page is, i assume it's just something which is forced to stay in the cache
+
+
+
+I think becasue I'm so confused about the optimizer, it'll be best if I just work on storage instead. I have a decent abstraction for that, the database class.
+
+
+Alright, I opted to write an in memory filesystem. I think it might be easier to test, and more portable between windowsn and unix. I also wrote an abstraction on top of the in memory filesystem that manages slotted pages like in the assignment specification.

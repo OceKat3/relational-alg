@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Generator, Iterable
 
 type Terminal = Callable[[Token], bool]
 type grammartype = dict[str, list[list[str | Terminal]]]
@@ -485,6 +485,230 @@ class Database:
     def get_table_by_name(self, name:str) -> Table | None:
         raise NotImplementedError()
 
+    def read_rows_from_table(self, name:str) -> Generator[tuple]:
+        raise NotImplementedError()
+
+    def write_rows_to_table(self, name:str, rows:Iterable[tuple]):
+        raise NotImplementedError()
+
+    def create_table(self, table:Table):
+        raise NotImplementedError()
+
+class InMemoryFilesystem:
+    BLOCK_SIZE = 4096
+    
+    files: dict[str, list[bytearray]]
+
+    def create_file(self, name:str):
+        if name in self.files :
+            raise FileExistsError()
+        self.files[name] = [bytearray(self.BLOCK_SIZE)]
+
+    def get_file(self, filename:str):
+        if filename not in self.files :
+            raise FileNotFoundError()
+        return self.files[filename]
+
+    def iter_blocks(self, filename:str):
+        if filename not in self.files :
+            raise FileNotFoundError()
+        yield from self.files[filename]
+
+    def grow(self, filename:str):
+        if filename not in self.files :
+            raise FileNotFoundError()
+        self.files[filename].append(bytearray(self.BLOCK_SIZE))
+    
+INTCONFIG = {"byteorder": "little", "signed": False}
+class InMemoryDatabase(Database):
+
+    fs: InMemoryFilesystem 
+
+    def __init__(self) -> None:
+        self.fs = InMemoryFilesystem()
+        self.fs.create_file("catalog")
+
+    # assignment says we have to use this format
+    @dataclass
+    class SlottedPage:
+
+        class PageFullException(BaseException):
+            pass
+
+        def initialize(self, page_id:int):
+            self.page_id = page_id
+            self.slot_count = 0
+            self.free_end = len(self.raw)
+            assert len(self.raw) == InMemoryFilesystem.BLOCK_SIZE
+
+        raw: bytearray
+
+        
+        HEADER_LENGTH = 8
+        SLOT_LENGTH = 4
+
+        @property
+        def page_id(self) -> int:
+            return int.from_bytes(self.raw[:4], **INTCONFIG)
+        @property
+        def slot_count(self) -> int:
+            return int.from_bytes(self.raw[4:6], **INTCONFIG)
+        @property
+        def free_end(self) -> int:
+            return int.from_bytes(self.raw[6:8], **INTCONFIG)
+
+        @page_id.setter
+        def page_id(self, val:int):
+            self.raw[:4] = val.to_bytes(**INTCONFIG, length=4)
+        @slot_count.setter
+        def slot_count(self, val:int):
+            self.raw[4:6] = val.to_bytes(**INTCONFIG, length=2)
+        @free_end.setter
+        def free_end(self, val:int):
+            self.raw[6:8] = val.to_bytes(**INTCONFIG, length=2)
+
+        def iter_records(self) -> Generator[bytes]:
+            for i in range(self.slot_count) :
+                slot_start = self.HEADER_LENGTH + i * self.SLOT_LENGTH
+
+                record_offset = int.from_bytes(self.raw[slot_start:slot_start+2], **INTCONFIG)
+                record_length = int.from_bytes(self.raw[slot_start+2:slot_start+4], **INTCONFIG)
+
+                if record_offset == record_length == 0 : continue
+
+                record = bytes(self.raw)[record_offset:record_offset+record_length]
+                yield record
+
+        def add_record(self, new_record:bytes):
+            available_space = self.free_end - (self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH)
+            required_space = len(new_record) + self.SLOT_LENGTH
+            if available_space < required_space :
+                raise self.PageFullException()
+
+            next_slot_start = self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH
+            record_length = len(new_record)
+            record_offset = self.free_end - record_length
+            self.raw[next_slot_start:next_slot_start+2] = record_offset.to_bytes(**INTCONFIG, length=2)
+            self.raw[next_slot_start+2:next_slot_start+4] = record_length.to_bytes(**INTCONFIG, length=2)
+            
+            self.raw[record_offset:record_offset+record_length] = new_record
+            self.free_end = record_offset
+            self.slot_count += 1
+
+    def iter_records(self, filename:str) -> Generator[bytes]:
+        for page in map(InMemoryDatabase.SlottedPage, self.fs.iter_blocks(filename)) :
+            yield from page.iter_records()
+
+    def add_record(self, filename:str, record:bytes):
+        file = self.fs.get_file(filename)
+        last_page = InMemoryDatabase.SlottedPage(file[-1])
+        try :
+            last_page.add_record(record)
+        except last_page.PageFullException :
+            self.fs.grow(filename)
+            last_page = InMemoryDatabase.SlottedPage(file[-1])
+            last_page.initialize(len(file) - 1)
+            last_page.add_record(record)
+
+    MAX_TABLE_NAME = 64
+    @staticmethod
+    def serialize_table(table:Table):
+        out = str()
+        if len(table.name) > InMemoryDatabase.MAX_TABLE_NAME :
+            raise TypeError(f"table name cannot be longer than {InMemoryDatabase.MAX_TABLE_NAME}")
+        # out += len(table.name).to_bytes(**InMemoryDatabase.SlottedPage.INTCONFIG, length=1)
+        # out += bytes(table.name, encoding='utf-8')
+        # for col in table.schema :
+        #     out += len()
+        out += "CREATE TABLE "
+        out += table.name
+        out += " ("
+        for col in table.schema :
+            out += col.name
+            out += " "
+            if col.type == int :
+                out += "NUM "
+            elif isinstance(col.type, tuple) :
+                out += f"VARCHAR({col.type[1]}) "
+            else:
+                raise TypeError(f"not a serializable column type in table definition: {table.name}.{col.name} : {col.type}")
+        out += ");"
+        return bytes(out, encoding='utf-8')
+
+    @staticmethod
+    def deserialize_table(bytes:bytes):
+        s = str(bytes, encoding="utf-8")
+
+        tokens = list(tokenizer(s))
+        r = Recognizer(document=tokens, real_string_input=document, grammar=sql_grammar)
+        r.earley_recognize()
+    
+        p = Parser(items=r.state_sets, document=tokens)
+        parsetree = p.create_tree()
+
+        ast = SqlTreeReducer.ast(parsetree)
+
+        assert isinstance(ast, SQL.CreateTable)
+            
+        return ast.table
+    
+    def create_table(self, table: Table):
+
+        if table.name in self.fs.files :
+            raise TypeError
+
+        schema_record = self.serialize_table(table)
+
+        self.add_record('catalog', schema_record)
+        
+        self.fs.create_file(table.name)
+        InMemoryDatabase.SlottedPage(self.fs.get_file(table.name)[0]).initialize(0)
+
+    @staticmethod
+    def get_tuple_deserializer(schema:tuple[type[int]|type[str], ...]) -> Callable[[bytes], tuple]:
+
+        def deserializer(record:bytes):
+            i = 0
+            out:list[int|str] = []
+            for tuple_index, t in enumerate(schema) :
+                if i >= len(record): raise IOError
+                if t is int:
+                    out.append(int.from_bytes(record[i:i+4], **INTCONFIG))
+                    i += 4
+                elif t is str:
+                    n = int.from_bytes(record[i:i+2], **INTCONFIG)
+                    i += 2
+                    s = str(record[i:i+n], encoding="utf-8")
+                    i += n
+                    out.append(s)
+            
+            return tuple(out)
+            
+        return deserializer
+
+    @staticmethod
+    def get_tuple_serializer(schema:tuple[type[int]|type[str], ...]) -> Callable[[tuple[int|str,...]], bytes]:
+
+        def serializer(tup:tuple[int|str,...]):
+            out = bytes().join(
+                int.to_bytes(x, **INTCONFIG, length=4) if t is int else int.to_bytes(len(x), **INTCONFIG, length=2)+bytes(x, encoding="utf-8") # type:ignore
+                for t, x in zip(schema, tup)
+            )
+            return out
+            
+        return serializer
+
+    def get_table_by_name(self, name:str) -> Table | None:
+        if name not in self.fs.files :
+            raise TypeError
+
+        return next((x for x in map(self.deserialize_table, self.iter_records('catalog')) if x.name == name), None)
+
+    def write_rows_to_table(self, name: str, rows: Iterable[tuple]):
+        pass
+
+    def read_rows_from_table(self, name: str) -> Generator[tuple, None, None]:
+        pass
 
 @dataclass
 class MockDatabaseSchemaOnly(Database):
@@ -983,6 +1207,10 @@ class SQL:
                 seen_names.add(col.name)
 
             return None
+
+        @property
+        def table(self):
+            return Table(self.tablename, self.coldefs)
         
     @dataclass
     class Attribute(Expr.ScalarExpression):
@@ -1133,7 +1361,14 @@ class RelationalAlgebra:
         right: RelationalAlgebra.RelationalGuy
         shared_cols: list[str]
 
+
+
 class Executor:
+
+    class TupleIterator:
+
+        def tuples(self) -> Generator[tuple]:
+            raise NotImplementedError()
 
     @dataclass
     class InsertInto:
@@ -1143,6 +1378,9 @@ class Executor:
     @dataclass
     class CreateTable:
         table: Table
+
+    class Scan:
+
 
 
             
