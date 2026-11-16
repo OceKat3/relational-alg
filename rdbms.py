@@ -50,172 +50,6 @@ arithmetic_grammar = {
     "factor": [[decimal], [special_char("("), "sum", special_char(")")]],
 }
 
-relational_algebra_grammar:grammartype = {
-    START_SYMBOL: [["input"]],
-    "input": [
-        ["statement"], 
-        ["statement", special_char(";")]
-    ],
-    "statement": [
-        ["relation_expression"],  # dql
-        ["create_relation"],      # ddl
-        ["insert_into_relation"], # dml
-        [literal_identifier('eval'), "scalar_expression"],
-        [literal_identifier('eval'), "boolean_expression"],
-    ],
-
-    "create_relation":[],
-    "insert_into_relation":[],
-
-    "relation_expression": [
-        ["unary_relational_expression"],
-        ["inner_relation_expression", "binary_relational_operator", "inner_relation_expression"],
-        ["table_identifier"]
-    ],
-
-    "inner_relation_expression": [
-        ["unary_relational_expression"],
-        [special_char('('), "inner_relation_expression", "binary_relational_operator", "inner_relation_expression", special_char(')')],
-        ["table_identifier"]
-    ],
-
-    "table_identifier": [
-        [identifier]
-    ],
-
-    "unary_relational_expression": [
-        [literal_identifier("select"), special_char('['), "boolean_expression", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
-        [literal_identifier("project"), special_char('['), "identifier_list", special_char(']'), special_char('('), "relation_expression", special_char(')')], 
-        [literal_identifier("rename"), special_char('['), "rename_list", special_char(']'), special_char('('), "relation_expression", special_char(')')],
-        [literal_identifier("compute"), special_char('['), "compute_list", special_char(']'), special_char('('), "relation_expression", special_char(')')],
-    ],
-    "binary_relational_operator": [
-        [literal_identifier("union")], 
-        [literal_identifier("intersect")], 
-        ["cartesian_product"],
-        [literal_identifier("subtract")],
-        [literal_identifier("minus")],
-        [literal_identifier("divide")],
-        ["join"],
-        
-    ],
-    "cartesian_product": [
-        [literal_identifier("cross")], 
-        [literal_identifier("cross"), literal_identifier("product")], 
-        [literal_identifier("cartesian"), literal_identifier("product")]
-    ],
-    "join": [
-        ["natural_join"],
-        ["theta_join"]
-    ],
-    "natural_join":[
-        [literal_identifier('join')],
-        [literal_identifier('outer'), literal_identifier('join')],
-        [literal_identifier('left'), literal_identifier('join')],
-    ],
-    "theta_join":[
-        ["natural_join", literal('['), "boolean_expression", literal(']')]
-    ],
-
-    "boolean_expression": [
-        ["disjunct"]
-    ],
-    "disjunct":[
-        ["conjunct", literal_identifier('or'), "disjunct"],
-        ["conjunct"]
-    ],
-    "conjunct":[
-        ["not", literal_identifier('and'), "conjunct"],
-        ["not"]
-    ],
-    "not": [
-        ["boolean_factor"],
-        [literal_identifier('not'), "boolean_factor",]
-    ],
-    "boolean_factor": [
-        [special_char('('), "boolean_expression", special_char(')')],
-        ["condition"],
-    ],
-
-    "condition":[
-        ["boolean_literal"],
-        ["scalar_expression", special_char('<>'), "scalar_expression"],
-        ["scalar_expression", special_char('='), "scalar_expression"],
-        ["scalar_expression", special_char('<>'), special_char('='), "scalar_expression"],
-        ["scalar_expression", special_char('='), special_char('='), "scalar_expression"],
-    ],
-
-    "boolean_literal": [
-        [literal_identifier("true")],
-        [literal_identifier("false")]
-    ],
-
-    "scalar_expression": [
-        ["numeric_expression"],
-        [string_literal],
-    ],
-
-    "numeric_expression": [
-        ["additive"]
-    ],
-
-    "additive": [
-        ["multiplicative", special_char('+-'), "additive"],
-        ["multiplicative"],
-    ],
-    "multiplicative": [
-        ["unm", special_char('*/'), "multiplicative"],
-        ["unm"],
-    ],
-    "unm": [
-        ["factor"],
-        [special_char('-'), "factor"],
-    ],
-    "factor": [
-        [special_char('('), "additive", special_char(')')],
-        ["number"],
-        ["attribute"],
-    ],
-    "number":[
-        [decimal],
-        [decimal, special_char('.'), decimal],
-        [special_char('.'), decimal],
-    ],
-
-    "attribute": [
-        [identifier],
-        [identifier, special_char('.'), identifier],
-        [literal_identifier('left'), special_char('.'), identifier],
-        [literal_identifier('right'), special_char('.'), identifier],
-    ],
-
-    "identifier_list": [
-        ["attribute"],
-        ["attribute", "identifier_list"],
-        ["attribute", special_char(','), "identifier_list"]
-    ],
-
-    "rename_list": [
-        ["rename"],
-        ["rename", "rename_list"],
-        ["rename", special_char(','), "rename_list"]
-    ],
-    "rename": [
-        [identifier, special_char('-'), special_char('>'), identifier]
-    ],
-
-    "compute_list": [
-        ["compute"],
-        ["compute", "compute_list"],
-        ["compute", special_char(','), "compute_list"]
-    ],
-    "compute": [
-        ["numeric_expression", literal_identifier('as'), identifier]
-    ]
-    
-}
-
-
 
 # earley parser somehow works for all three of these? 
 # i thought that ambiguous grammars would break the parser, but clearly some ambiguous grammars work just fine
@@ -1076,24 +910,77 @@ class SQL:
     @dataclass
     class Insert(SQLNode):
         into: str
-        data: list[list[int | str]]
+        data: list[list[Expr.ScalarExpression]]
 
         cols: list[str] | None = None
         
         into_table: Table | None = None
 
-        def typecheck(self) -> Any:
-            return super().typecheck()
+        # table.schema index -> given data index
+        permutation: list[int] | None = None
         
+        def typecheck(self) -> None:
+            db = ExecutionContext.database()
+            table = db.get_table_by_name(self.into)
+            self.into_table = table
+            if not table :
+                raise TypeError(f"table does not exist: {self.into}")
+
+            if self.cols :
+                self.permutation = [None] * len(table.schema) #type: ignore
+                assert self.permutation is not None
+                
+                seen_names = set()
+                for input_idx, col in enumerate(self.cols) :
+                    if col in seen_names :
+                        raise TypeError(f"duplicate name in INSERT clause: {col}")
+                    seen_names.add(col)
+
+                    schema_idx, matching_col = next(((i, c) for i, c in enumerate(table.schema) if c.name == col), (None, None))
+                    if matching_col is None or schema_idx is None :
+                        raise TypeError(f"inserted column {col} does not exist in {self.into}")
+                    self.permutation[schema_idx] = input_idx
+
+                if len(self.cols) < len(table.schema) :
+                    raise TypeError(f"inserting into {self.into}, missing some columns: {set(c.name for c in table.schema).difference(set(self.cols))}")
+            
+            for row in self.data:
+                if len(row) != len(table.schema) : 
+                    raise TypeError(f"wrong number of elements in tuple {row}, got {len(row)} elements but was expecting {len(table.schema)} elements in {self.into}")
+                
+                for i, coldef in enumerate(table.schema):
+                    item = row[self.permutation[i]] if self.permutation is not None else row[i]
+                    item_type = item.typecheck()
+                    
+                    if not are_types_compatible(item_type, coldef.type) :
+                        # TODO pretty print coldef.type
+                        raise TypeError(f"type mismatch, {item} is not {coldef.type}")
+                    
+                    if isinstance(item, Expr.ScalarLiteral) and isinstance(item_type, tuple) and isinstance(coldef.type, tuple) :
+                        if item_type[1] > coldef.type[1] :
+                            raise TypeError(f'string exceeds the size limit of VARCHAR({coldef.type[1]}): "{item.val}" ')
+            
+                
+            
     @dataclass
     class CreateTable(SQLNode):
         tablename: str
         coldefs: list[Table.ColDef]
 
         def typecheck(self) -> Any:
-            return super().typecheck()
+            db = ExecutionContext.database()
+            existing_table = db.get_table_by_name(self.tablename)
+            if existing_table :
+                raise TypeError(f"table already exists: {self.tablename}")
 
-    
+            seen_names = set()
+            for col in self.coldefs :
+                if col.name in seen_names :
+                    raise TypeError(f"duplicate name in table definition: {self.tablename}.{col.name}")
+                seen_names.add(col.name)
+
+            return None
+        
     @dataclass
     class Attribute(Expr.ScalarExpression):
         col: str
@@ -2248,8 +2135,16 @@ class SqlTreeReducer:
                 return [cls.reduce(element)] + cls.reduce(rest_of_list)
             case nonterminal, Parser.Node() as element, (_, _, _), Parser.Node() as rest_of_list if nonterminal.endswith('_list') :
                 return [cls.reduce(element)] + cls.reduce(rest_of_list)
-            case nonterminal, Parser.Node() as element, (_, _, _), if nonterminal.endswith('_list') :
+            case nonterminal, Parser.Node() as element, (_, _, _) if nonterminal.endswith('_list') :
                 return [cls.reduce(element)]
+
+            case 'identifier_list', ('identifier', element, _) :
+                return [element]
+            case 'identifier_list', ('identifier', element, _), Parser.Node() as rest_of_list :
+                return [element] + cls.reduce(rest_of_list)
+            case 'identifier_list', ('identifier', element, _), (_, _, _), Parser.Node() as rest_of_list :
+                return [element] + cls.reduce(rest_of_list)
+
             # expression grammar
 
             case 'number', ('number', n, _) :

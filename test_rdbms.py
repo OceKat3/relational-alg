@@ -206,16 +206,16 @@ def test_parse_create_table_1():
     test_cases = [
         "CREATE TABLE employees (id NUM name VARCHAR password VARCHAR(64))",
         "CREATE TABLE employees (id NUM, name VARCHAR, password VARCHAR(64))",
-        ]
+    ]
 
     for document in test_cases:
         assert ast(document) is not None
 
 def test_typecheck_create_table_1():
     test_cases = [
-            "CREATE TABLE employees (id NUM name VARCHAR password VARCHAR(64))",
-            "CREATE TABLE employees (id NUM, name VARCHAR, password VARCHAR(64))",
-        ]
+        "CREATE TABLE employees (id NUM name VARCHAR password VARCHAR(64))",
+        "CREATE TABLE employees (id NUM, name VARCHAR, password VARCHAR(64))",
+    ]
     
     for document in test_cases:
         with ExecutionContext.cur_database.set(MockDatabaseSchemaOnly.from_tables()) :
@@ -235,6 +235,48 @@ def test_parse_insert_1():
 
     for document in test_cases:
         assert ast(document) is not None
+
+def test_typecheck_insert_into_1():
+    test_cases = [
+        'INSERT INTO employees (eid, managerid, name) VALUES (1 2 "asd") (2 3 "sadasdasdasdasd")',
+        'INSERT INTO employees (eid, managerid, name) VALUES (1, 2, "asd"), (2,3,"sadasdasdasdasd")',
+        'INSERT INTO employees (managerid, eid, name) VALUES (1 2 "asd") (2 3 "sadasdasdasdasd")',
+        'INSERT INTO employees (name, managerid, eid) VALUES ("asd", 2, 1)',
+        'INSERT INTO employees VALUES (1 2 "asd") (2 3 "sadasdasdasdasd")',
+        'INSERT INTO employees VALUES (1, 2, "asd"), (2,3,"sadasdasdasdasd")',
+    ]
+    
+    for document in test_cases:
+        with expect_failure(TypeError):
+            with ExecutionContext.cur_database.set(MockDatabaseSchemaOnly.from_tables()) :
+                sql = ast(document)
+                assert sql is not None
+                sql.typecheck()
+        
+        with ExecutionContext.cur_database.set(COMPANY_DATABASE_SCHEMA) :
+            sql = ast(document)
+            assert sql is not None
+            sql.typecheck()
+
+def test_typecheck_insert_into_2():
+    typeerrors = [
+        'INSERT INTO employees (eid, eid, name) VALUES (1 2 "asd") (2 3 "sadasdasdasdasd")',
+        'INSERT INTO employees (eid, name) VALUES (1, 2, "asd"), (2,3,"sadasdasdasdasd")',
+        'INSERT INTO employees (eid, name, managerid, asdasd) VALUES (1, 2, "asd"), (2,3,"sadasdasdasdasd")',
+        'INSERT INTO employees (name, eid, managerid) VALUES (1, 2, "asd"), (2,3,"sadasdasdasdasd")',
+        'INSERT INTO employees VALUES ("a" 2 "asd") (2 3 "sadasdasdasdasd")',
+        'INSERT INTO employees VALUES (1, 2, "asd"), (2,"a","sadasdasdasdasd")',
+        'INSERT INTO employees (eid, managerid, name) VALUES (1 2 "asd" 3) (2 3 "sadasdasdasdasd" 4 5)',
+        'INSERT INTO employees (name, managerid, eid) VALUES (1, 2, "asd"), (2,3,"sadasdasdasdasd")',
+    ]   
+    
+    for document in typeerrors:
+        with expect_failure(TypeError):
+            with ExecutionContext.cur_database.set(COMPANY_DATABASE_SCHEMA) :
+                print(document)
+                sql = ast(document)
+                assert sql is not None
+                sql.typecheck()
 
 
 "SELECT COUNT(a) FROM B" # this should fail because a is not aggregated
