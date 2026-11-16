@@ -737,6 +737,9 @@ class SQL:
         def typecheck(self) -> Any:
             raise NotImplementedError()
 
+        def create_relational_guy(self) -> RelationalAlgebra.RelationalGuy :
+            raise NotImplementedError()
+
     @dataclass
     class ChainStatements(SQLNode):
 
@@ -1094,6 +1097,52 @@ class SQL:
 
             return self.check_schemas_compatible(left, right)
             
+
+class RelationalAlgebra:
+
+    class RelationalGuy():
+        pass
+
+    @dataclass
+    class ScanTable():
+        table: Table
+        original_name: str
+
+    @dataclass
+    class Select(RelationalGuy):
+        predicate: Expr.BooleanExpression
+        operand: RelationalAlgebra.RelationalGuy
+
+    @dataclass
+    class ProjectRenameCompute(RelationalGuy):
+        output: list[SQL.Select.Item]
+        operand: RelationalAlgebra.RelationalGuy
+
+    @dataclass
+    class GroupBy(RelationalGuy):
+        cols: list[str]
+
+    @dataclass
+    class Cross(RelationalGuy):
+        left: RelationalAlgebra.RelationalGuy
+        right: RelationalAlgebra.RelationalGuy
+
+    @dataclass
+    class NaturalJoin(RelationalGuy):
+        left: RelationalAlgebra.RelationalGuy
+        right: RelationalAlgebra.RelationalGuy
+        shared_cols: list[str]
+
+class Executor:
+
+    @dataclass
+    class InsertInto:
+        tablename: str
+        data: list[list[Expr.ScalarExpression]]
+
+    @dataclass
+    class CreateTable:
+        table: Table
 
 
             

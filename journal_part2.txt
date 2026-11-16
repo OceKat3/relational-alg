@@ -288,3 +288,14 @@ Alright, now that a bunch of test cases are passing for JOINs, I think I need to
 Another simplification I can make: the assignment specification says to never deal with null values in the database, so INSERT INTO will always insert every single column of the table. 
 
 Good shit i think i'm pretty happy to treat the typechecker as done for tonight. i have a bunch of tests passing for select, insert, and create. I could spend more time to go further in depth with the tests but i really have to get to work on the relational algebra part
+
+
+
+I just had a read through the optimizer specification and the physical plan specification, and I think I am even more confused. There's alot of incomprehensible claude slop and (what appear to be) ai hallucinations. Some parts of the assignment specification are contradictory to eachother....
+
+For now I'll set up a RelationalAlgebra and Executor class to start defining the recursive structure of both steps at least. I'm really unsure about optimization but I think I can at least translate from sql to relational algebra right now
+
+I also just noticed that my sql is superior to the assignment in the sense that it supports arithmetic, for example SELECT 1+2+3 as n. 
+
+
+
