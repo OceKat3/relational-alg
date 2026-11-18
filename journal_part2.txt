@@ -309,3 +309,37 @@ I think becasue I'm so confused about the optimizer, it'll be best if I just wor
 
 
 Alright, I opted to write an in memory filesystem. I think it might be easier to test, and more portable between windowsn and unix. I also wrote an abstraction on top of the in memory filesystem that manages slotted pages like in the assignment specification.
+
+
+
+
+IMPORTANT IDEA I JUST HAD THAT I CANT REALLY CODE R IGHT NOW BUT I HAVE TO WRITE IT DOWN!!!!!!
+
+algorithm to iterate through a bunch of variations of a tree:
+
+each node implements like iter_variations() or iter_some_equivalent_subtrees()
+
+def select.iter_variations():
+    match self, self.operand :
+        case Select(), Select() :
+            yield self
+            for new_operand in self.operand.iter_subtrees():
+                is there a better way to flip the order of two nodes???????
+                new_self = Select(shallowcopy self.operand, shallowcopy self)
+                new_self.operand.operand = subtree
+                yield new_self
+(nevermind this doesnt really work but its probably close to something that does)
+
+what i want is to transform self(operand(E)) into operand(self(E.iter_variations()))
+but i think the it could be simplified to
+self(operand) -> operand(self(operand.iter_variations)) ???
+
+does an element yielded by self.iter_variations have the same arity as self? same type as self? can it include a node of the same type as self?
+
+this algorithm will not iterate through all subtrees but it'll do like a lot of them. using the algorithm over and over again might help
+
+e.g. 
+tree_set = {root}
+tree_set.add(*root.iter_subtrees())
+for tree in ree_set
+    tree_set.add(*tree.iter_subtrees())
