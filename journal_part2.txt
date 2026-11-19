@@ -311,6 +311,19 @@ I think becasue I'm so confused about the optimizer, it'll be best if I just wor
 Alright, I opted to write an in memory filesystem. I think it might be easier to test, and more portable between windowsn and unix. I also wrote an abstraction on top of the in memory filesystem that manages slotted pages like in the assignment specification.
 
 
+Alright, I'm getting ready to go to bed, I ought to plan out the rest of the work for this assignment.
+
+- finish writing tests for the in-memory database, mainly focused on the database api and trying to cause errors by filling it up with hundreds of files or tuples (to overflow onto multiple pages)
+
+- translate SQL to relational algebra
+
+- translate relational algebra to a functional query plan, and hook up the query plan to the in memory database
+
+- then, write the optimizer after SQL is already being turned into execution plans
+
+- then look over all the other ideas I had and look for possible code improvements
+
+
 
 
 IMPORTANT IDEA I JUST HAD THAT I CANT REALLY CODE R IGHT NOW BUT I HAVE TO WRITE IT DOWN!!!!!!
@@ -343,3 +356,4 @@ tree_set = {root}
 tree_set.add(*root.iter_subtrees())
 for tree in ree_set
     tree_set.add(*tree.iter_subtrees())
+
