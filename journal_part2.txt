@@ -357,3 +357,55 @@ tree_set.add(*root.iter_subtrees())
 for tree in ree_set
     tree_set.add(*tree.iter_subtrees())
 
+
+
+Wednesday night
+
+
+I don't have much time to work on this project today, but I want to do a little bit of thinking about the remaining work.
+
+For one, I think I need to rewrite part of my storage engine / in memory filesystem. The in-memory filesystem kinda serves two purposes: one, test without actually depending on open(), and two, force myself to make a really good plug-and-play interface so i can code a second abstraction that uses the real filesystem. I just don't really like the abstractions i made, i think the code is quite messy...
+
+I just wrote down a new abstract Filesystem class that sortof does what i want. Mainly, this has to work with the python open() api, but also with whatever im memory filesystem
+
+https://docs.python.org/3/library/io.html
+
+upon reading this, maybe I can also use python's io abstraction here... raw io also seems interesting and like it solves my problem of wanting a low level io interface in python
+
+https://stackoverflow.com/questions/14271216/why-is-there-an-issue-with-reading-and-writing-to-the-same-file
+
+looks like i want to use 'rb+' to open files, with seek(n), tell(), read(n), and write()
+
+>>> file = open('tmp', 'rb+')
+>>> type(file)
+<class '_io.BufferedRandom'>
+>>> 
+
+Now, which abstraction do I want to use? A stream with random access (BufferedRandom), or a list of blocks (custom Filesystem class). I think it'll be easier to abstract away blocks, maybe even by overloading python's list operator to make really convenient use...
+
+The buffer pool will use a block/page/frame abstraction anyway, so all io will be happening in multiples of 4096 bytes. The buffer pool actually seems pretty fun to implement.
+
+So, like, my storage engine abstractions are:
+
+Filesystem or maybe BlockFilesystem, read and write whole blocks. this will be an abstract class, and the implementation is either an in-memory version or an on-disk version
+InMemoryFilesystem, provides the same interface as BlockFilesystem but does not use hardware
+
+BufferPool, just a cache on top of BlockFilesystem
+
+SlottedPage, an abstraction over one page/frame that does slotting stuff
+DirectoryPage, like SlottedPage but for a directory page (like in the assignment specification)
+^ both of these classes are like stupidly simple wrappers that just abstract some binary index arithmetic nonsense
+
+HeapDatastore, represents one table/file that uses slotted pages and directory pages. Handles stuff like following the directory pages, creating new pages when all others are full... has no idea what a tuple is, just deals with binary records. has a Filesystem and a filename, uses SlottedPage and DirectoryPage as utilities
+
+Codec, convert tuples to/from bytes given a schema, convert tables and schemas to/from bytes, convert table statistics to to/from bytes
+
+OnDiskDatabase, provides an interface to read/write tuples, create tables, and save statistics to the rest of the project, implements database. Uses Codec and has to make a HeapDatastore for each table
+
+InMemoryDatabase, test functionality without any of this page stuff
+
+I'll implement this tomorrow night... it's really late and I have work at 9am. I'm glad to have spent some time thinking about this tho
+
+I also have some ideas about how optimization should work... i was thinking about the algorithm i gave earlier. I think it would be neat to reject any new query plan whose cost is more than the minimum, to save time scanning useless trees based on that.
+
+I also realize now that the relational algebra logical plan should use some kind of fully qualified name so that it's not confusing as shit... name resolution is hard. I want to give the physical plan in terms of tuple indices, but i should probably stick to "table.column" for now... table renames are annoying....
