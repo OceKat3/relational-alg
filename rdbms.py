@@ -522,6 +522,140 @@ class InMemoryFilesystem:
         self.files[filename].append(bytearray(self.BLOCK_SIZE))
     
 INTCONFIG = {"byteorder": "little", "signed": False}
+
+# assignment says we have to use this format
+
+# maybe eventually SlottedPage and DirectoryPage can be the same abstraction
+
+class PageFullException(BaseException):
+    pass
+
+@dataclass
+class SlottedPage:
+
+    raw: bytearray
+
+    def initialize(self, page_id:int):
+        self.page_id = page_id
+        self.slot_count = 0
+        self.free_end = len(self.raw)
+        assert len(self.raw) == InMemoryFilesystem.BLOCK_SIZE
+    
+    HEADER_LENGTH = 8
+    SLOT_LENGTH = 4
+
+    @property
+    def page_id(self) -> int:
+        return int.from_bytes(self.raw[:4], **INTCONFIG)
+    @property
+    def slot_count(self) -> int:
+        return int.from_bytes(self.raw[4:6], **INTCONFIG)
+    @property
+    def free_end(self) -> int:
+        return int.from_bytes(self.raw[6:8], **INTCONFIG)
+
+    @page_id.setter
+    def page_id(self, val:int):
+        self.raw[:4] = val.to_bytes(**INTCONFIG, length=4)
+    @slot_count.setter
+    def slot_count(self, val:int):
+        self.raw[4:6] = val.to_bytes(**INTCONFIG, length=2)
+    @free_end.setter
+    def free_end(self, val:int):
+        self.raw[6:8] = val.to_bytes(**INTCONFIG, length=2)
+
+    def iter_records(self) -> Generator[bytes]:
+        for i in range(self.slot_count) :
+            slot_start = self.HEADER_LENGTH + i * self.SLOT_LENGTH
+
+            record_offset = int.from_bytes(self.raw[slot_start:slot_start+2], **INTCONFIG)
+            record_length = int.from_bytes(self.raw[slot_start+2:slot_start+4], **INTCONFIG)
+
+            if record_offset == record_length == 0 : continue
+
+            record = bytes(self.raw)[record_offset:record_offset+record_length]
+            yield record
+
+    def add_record(self, new_record:bytes):
+        available_space = self.free_end - (self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH)
+        required_space = len(new_record) + self.SLOT_LENGTH
+        if available_space < required_space :
+            raise PageFullException()
+
+        next_slot_start = self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH
+        record_length = len(new_record)
+        record_offset = self.free_end - record_length
+        self.raw[next_slot_start:next_slot_start+2] = record_offset.to_bytes(**INTCONFIG, length=2)
+        self.raw[next_slot_start+2:next_slot_start+4] = record_length.to_bytes(**INTCONFIG, length=2)
+        
+        self.raw[record_offset:record_offset+record_length] = new_record
+        self.free_end = record_offset
+        self.slot_count += 1
+
+    def calculate_free_space() -> int:
+        pass
+    
+
+@dataclass
+class DirectoryPage:
+
+    raw: bytearray
+
+    HEADER_SIZE=10
+    ENTRY_LENGTH = 4+2
+
+    @property
+    def page_id(self) -> int:
+        return int.from_bytes(self.raw[:4], **INTCONFIG)
+    @property
+    def next_dir_page(self) -> int | None:
+        raw = self.raw[4:8]
+        return None if raw == b'\xFF\xFF\xFF\xFF' else int.from_bytes(raw, **INTCONFIG)
+    @property
+    def entry_count(self) -> int:
+        return int.from_bytes(self.raw[8:10], **INTCONFIG)
+
+    @page_id.setter
+    def page_id(self, val:int):
+        self.raw[:4] = val.to_bytes(**INTCONFIG, length=4)
+    @next_dir_page.setter
+    def next_dir_page(self, val:int | None):
+        if val is None :
+            self.raw[4:8] = b'\xFF\xFF\xFF\xFF'
+        else:
+            self.raw[4:8] = val.to_bytes(**INTCONFIG, length=4)
+    @entry_count.setter
+    def entry_count(self, val:int):
+        self.raw[8:10] = val.to_bytes(**INTCONFIG, length=2)
+
+    def __getitem__(self, key:int):
+        entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
+        if not self.HEADER_SIZE <= entry_start < 4096-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+
+        raw = self.raw[entry_start:entry_start+self.ENTRY_LENGTH]
+
+        return int.from_bytes(raw[:4], **INTCONFIG), int.from_bytes(raw[4:6], **INTCONFIG)
+
+    def __setitem__(self, key:int, val:tuple[int,int] ):
+        entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
+        if not self.HEADER_SIZE <= entry_start < 4096-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+        data_page_id, free_space = val
+
+        self.raw[entry_start:entry_start+4] = data_page_id.to_bytes(**INTCONFIG, length=4)
+        self.raw[entry_start+4:entry_start+6] = free_space.to_bytes(**INTCONFIG, length=2)
+    
+    def append(self, data_page_id:int, free_space:int):
+        try :
+            self[self.entry_count] = (data_page_id, free_space)
+            self.entry_count += 1
+        except IndexError :
+            raise PageFullException()
+
+    def iter_pages(self):
+        for i in range(self.entry_count) :
+            yield self[i]
+
+
 class InMemoryDatabase(Database):
 
     fs: InMemoryFilesystem 
@@ -530,85 +664,20 @@ class InMemoryDatabase(Database):
         self.fs = InMemoryFilesystem()
         self.fs.create_file("catalog")
 
-    # assignment says we have to use this format
-    @dataclass
-    class SlottedPage:
-
-        class PageFullException(BaseException):
-            pass
-
-        def initialize(self, page_id:int):
-            self.page_id = page_id
-            self.slot_count = 0
-            self.free_end = len(self.raw)
-            assert len(self.raw) == InMemoryFilesystem.BLOCK_SIZE
-
-        raw: bytearray
-
-        
-        HEADER_LENGTH = 8
-        SLOT_LENGTH = 4
-
-        @property
-        def page_id(self) -> int:
-            return int.from_bytes(self.raw[:4], **INTCONFIG)
-        @property
-        def slot_count(self) -> int:
-            return int.from_bytes(self.raw[4:6], **INTCONFIG)
-        @property
-        def free_end(self) -> int:
-            return int.from_bytes(self.raw[6:8], **INTCONFIG)
-
-        @page_id.setter
-        def page_id(self, val:int):
-            self.raw[:4] = val.to_bytes(**INTCONFIG, length=4)
-        @slot_count.setter
-        def slot_count(self, val:int):
-            self.raw[4:6] = val.to_bytes(**INTCONFIG, length=2)
-        @free_end.setter
-        def free_end(self, val:int):
-            self.raw[6:8] = val.to_bytes(**INTCONFIG, length=2)
-
-        def iter_records(self) -> Generator[bytes]:
-            for i in range(self.slot_count) :
-                slot_start = self.HEADER_LENGTH + i * self.SLOT_LENGTH
-
-                record_offset = int.from_bytes(self.raw[slot_start:slot_start+2], **INTCONFIG)
-                record_length = int.from_bytes(self.raw[slot_start+2:slot_start+4], **INTCONFIG)
-
-                if record_offset == record_length == 0 : continue
-
-                record = bytes(self.raw)[record_offset:record_offset+record_length]
-                yield record
-
-        def add_record(self, new_record:bytes):
-            available_space = self.free_end - (self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH)
-            required_space = len(new_record) + self.SLOT_LENGTH
-            if available_space < required_space :
-                raise self.PageFullException()
-
-            next_slot_start = self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH
-            record_length = len(new_record)
-            record_offset = self.free_end - record_length
-            self.raw[next_slot_start:next_slot_start+2] = record_offset.to_bytes(**INTCONFIG, length=2)
-            self.raw[next_slot_start+2:next_slot_start+4] = record_length.to_bytes(**INTCONFIG, length=2)
-            
-            self.raw[record_offset:record_offset+record_length] = new_record
-            self.free_end = record_offset
-            self.slot_count += 1
+    
 
     def iter_records(self, filename:str) -> Generator[bytes]:
-        for page in map(InMemoryDatabase.SlottedPage, self.fs.iter_blocks(filename)) :
+        for page in map(SlottedPage, self.fs.iter_blocks(filename)) :
             yield from page.iter_records()
 
     def add_record(self, filename:str, record:bytes):
         file = self.fs.get_file(filename)
-        last_page = InMemoryDatabase.SlottedPage(file[-1])
+        last_page = SlottedPage(file[-1])
         try :
             last_page.add_record(record)
         except last_page.PageFullException :
             self.fs.grow(filename)
-            last_page = InMemoryDatabase.SlottedPage(file[-1])
+            last_page = SlottedPage(file[-1])
             last_page.initialize(len(file) - 1)
             last_page.add_record(record)
 
@@ -618,7 +687,7 @@ class InMemoryDatabase(Database):
         out = str()
         if len(table.name) > InMemoryDatabase.MAX_TABLE_NAME :
             raise TypeError(f"table name cannot be longer than {InMemoryDatabase.MAX_TABLE_NAME}")
-        # out += len(table.name).to_bytes(**InMemoryDatabase.SlottedPage.INTCONFIG, length=1)
+        # out += len(table.name).to_bytes(**SlottedPage.INTCONFIG, length=1)
         # out += bytes(table.name, encoding='utf-8')
         # for col in table.schema :
         #     out += len()
@@ -664,7 +733,7 @@ class InMemoryDatabase(Database):
         self.add_record('catalog', schema_record)
         
         self.fs.create_file(table.name)
-        InMemoryDatabase.SlottedPage(self.fs.get_file(table.name)[0]).initialize(0)
+        SlottedPage(self.fs.get_file(table.name)[0]).initialize(0)
 
     @staticmethod
     def get_tuple_deserializer(schema:list[Table.ColDef]) -> Callable[[bytes], tuple]:

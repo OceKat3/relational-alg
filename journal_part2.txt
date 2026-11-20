@@ -409,3 +409,13 @@ I'll implement this tomorrow night... it's really late and I have work at 9am. I
 I also have some ideas about how optimization should work... i was thinking about the algorithm i gave earlier. I think it would be neat to reject any new query plan whose cost is more than the minimum, to save time scanning useless trees based on that.
 
 I also realize now that the relational algebra logical plan should use some kind of fully qualified name so that it's not confusing as shit... name resolution is hard. I want to give the physical plan in terms of tuple indices, but i should probably stick to "table.column" for now... table renames are annoying....
+
+
+
+I'm reading through the assignment specification for the storage module again, and now I'm a little confused...
+
+Compaction / making use of empty space in data pages (slotted pages) is not necessary. But also, when inserting a record, we go through directory pages looking for anyplace that has sufficient free space. 
+
+I think heapfiles (with directory pages) are only useful if they let you quickly find empty spaces in old pages... i might implement like a "largest free subsequence" property of data pages that gets stored in their corresponding directory page, so when you want to insert a record, you find the first page which has a free subsequence big enough to fit that record.
+
+Also, this system just cannot handle records larger than like 4k bytes... obviously i could make blocks larger but that's a serious limitation
