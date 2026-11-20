@@ -516,17 +516,17 @@ class Filesystem:
     class File:
 
         def read_block(self, i:int) -> bytearray:
-            pass
+            raise NotImplementedError()
         
         def write_block(self, i:int, data:bytes):
-            pass
+            raise NotImplementedError()
 
-        def close():
-            pass
-
-
-    def open(self, filename:str) -> File:
+        def close(self):
+            raise NotImplementedError()
+        
+    def open(self, filename:str, create_new_file:bool = True) -> File:
         raise NotImplementedError()
+
 
 class InMemoryFilesystem(Filesystem):
 
@@ -561,24 +561,30 @@ class InMemoryFilesystem(Filesystem):
             self.open_count -= 1
             assert self.open_count == 0
 
-    def open(self, filename:str):
+    def open(self, filename:str, create_new_file:bool = True):
         if filename in self.files :
             file = self.files[filename]
             file.open_count += 1
             return file
         else:
-            file = self.InMemoryFile()
-            self.files[filename] = file
-            file.open_count += 1
-            return file
+            if create_new_file :
+                file = self.InMemoryFile()
+                self.files[filename] = file
+                file.open_count += 1
+                return file
+            else:
+                raise FileNotFoundError(filename)
+
 
 
 import io
+import os
 
 @dataclass
 class OnDiskFileystem(Filesystem):
 
-    db_directory:str = "db/"
+    directory:str = "db/"
+    extension:str = '.db'
 
     @dataclass
     class OnDiskFile(Filesystem.File):
@@ -598,13 +604,27 @@ class OnDiskFileystem(Filesystem):
             del self.io
         
 
-    def open(self, filename:str) -> OnDiskFile:
-        file = open(self.db_directory + filename, 'ab+') # append in binary
+    def open(self, filename:str, create_new_file:bool = True) -> OnDiskFile:
+        if create_new_file :
+            try :
+                os.makedirs(self.directory)
+            except FileExistsError :
+                pass
+        
+        file = open(self.directory + filename + self.extension, 'ab+' if create_new_file else 'rb+') # append in binary
         assert isinstance(file, io.BufferedRandom)
         assert file.seekable()
         assert file.writable()
         assert file.readable()
         return self.OnDiskFile(file)
+
+    def clean_directory(self):
+        try :
+            for file in os.listdir(self.directory) :
+                if file.endswith(self.extension) :
+                    os.remove(self.directory + file)
+        except FileNotFoundError :
+            pass
 
 
 
@@ -799,7 +819,7 @@ class InMemoryDatabase(Database):
 
     def __init__(self) -> None:
         self.fs = InMemoryFilesystem()
-        self.fs.create_file("catalog")
+        # self.fs.create_file("catalog")
 
     
 

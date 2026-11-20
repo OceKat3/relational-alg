@@ -43,7 +43,7 @@ def expect_failure(*errors: type[BaseException]):
     except BaseException as e :
         raise AssertionError(f"block raised an unexpected error: ", e)
     else:
-        raise AssertionError(f"block did not raise any of these errors: {errors}")
+        raise AssertionError(f"block did not raise any errors, was expecting one of: {errors}")
 
 ##
 
@@ -314,6 +314,58 @@ def test_memory_db_1():
 "SELECT a FROM B JOIN B ON b1=b2" #should fail typecheck due to an ambiguous self join
 
 
+from rdbms import InMemoryFilesystem, OnDiskFileystem, BLOCK_SIZE
+
+def test_memory_and_disk_filesystem_parity():
+
+    mfs = InMemoryFilesystem()
+    dfs = OnDiskFileystem(directory="test_data/")
+    dfs.clean_directory()
+
+    for fs in (mfs, dfs) :
+
+        with expect_failure(FileNotFoundError):
+            fs.open('a', create_new_file=False)
+            
+        file = fs.open('a', create_new_file=True)
+        
+        assert_equal(file.read_block(0), bytearray())
+        
+        import secrets
+
+        data = secrets.token_bytes(BLOCK_SIZE)
+        file.write_block(0, data)
+        assert_equal(file.read_block(0), data)
+        
+        data2 = secrets.token_bytes(BLOCK_SIZE)
+        file.write_block(100, data2)
+        assert_equal(file.read_block(1), data2)
+
+        file.write_block(0, data2)
+        assert_equal(file.read_block(0), data2)
+
+        with expect_failure(ValueError):
+            file.write_block(2, b'asdfiuuhasdfiuhasfediuh')
+
+
+
+import os
+def test_disk_filesystem_creates_directory():
+
+    DIR = "asdasdasdasdasdas"
+
+    try :
+        os.rmdir(DIR)
+    except: pass
+
+    OnDiskFileystem(directory=DIR).open('catalog', create_new_file=True)
+
+    os.stat(DIR)
+
+    try :
+        os.rmdir(DIR)
+    except: pass
+    
 
 
 
