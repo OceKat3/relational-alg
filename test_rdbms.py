@@ -314,40 +314,46 @@ def test_memory_db_1():
 "SELECT a FROM B JOIN B ON b1=b2" #should fail typecheck due to an ambiguous self join
 
 
-from rdbms import InMemoryFilesystem, OnDiskFileystem, BLOCK_SIZE
+from rdbms import Filesystem, InMemoryFilesystem, OnDiskFileystem, BLOCK_SIZE
 
-def test_memory_and_disk_filesystem_parity():
+def _test_filesystem(fs:Filesystem):
 
+    with expect_failure(FileNotFoundError):
+        fs.open('a', create_new_file=False)
+        
+    file = fs.open('a', create_new_file=True)
+    
+    assert_equal(file.read_block(0), bytearray())
+    
+    import secrets
+
+    # data = secrets.token_bytes(BLOCK_SIZE)
+    data = b'1' * BLOCK_SIZE
+    file.write_block(0, data)
+    assert_equal(file.read_block(0), data)
+    
+    # data2 = secrets.token_bytes(BLOCK_SIZE)
+    data2 = b'2' * BLOCK_SIZE
+    file.write_block(100, data2)
+    assert_equal(file.read_block(1), data2)
+
+    file.write_block(0, data2)
+
+    print(file.read_block(0) + file.read_block(1) + file.read_block(2))
+
+    assert_equal(file.read_block(0), data2)
+
+    with expect_failure(ValueError):
+        file.write_block(2, b'asdfiuuhasdfiuhasfediuh')
+
+def test_memory_fs():
     mfs = InMemoryFilesystem()
+    _test_filesystem(mfs)
+
+def test_disk_fs():
     dfs = OnDiskFileystem(directory="test_data/")
     dfs.clean_directory()
-
-    for fs in (mfs, dfs) :
-
-        with expect_failure(FileNotFoundError):
-            fs.open('a', create_new_file=False)
-            
-        file = fs.open('a', create_new_file=True)
-        
-        assert_equal(file.read_block(0), bytearray())
-        
-        import secrets
-
-        data = secrets.token_bytes(BLOCK_SIZE)
-        file.write_block(0, data)
-        assert_equal(file.read_block(0), data)
-        
-        data2 = secrets.token_bytes(BLOCK_SIZE)
-        file.write_block(100, data2)
-        assert_equal(file.read_block(1), data2)
-
-        file.write_block(0, data2)
-        assert_equal(file.read_block(0), data2)
-
-        with expect_failure(ValueError):
-            file.write_block(2, b'asdfiuuhasdfiuhasfediuh')
-
-
+    _test_filesystem(dfs)
 
 import os
 def test_disk_filesystem_creates_directory():

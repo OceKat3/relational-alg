@@ -481,7 +481,8 @@ class SQLContext:
             yield
 
 
-BLOCK_SIZE = 4096
+# BLOCK_SIZE = 4096
+BLOCK_SIZE = 64
 
 # class InMemoryFilesystem:
 #     BLOCK_SIZE = 4096
@@ -523,6 +524,11 @@ class Filesystem:
 
         def close(self):
             raise NotImplementedError()
+
+        def size_blocks(self) -> int:
+            raise NotImplementedError()
+
+        def __len__(self): return self.size_blocks()
         
     def open(self, filename:str, create_new_file:bool = True) -> File:
         raise NotImplementedError()
@@ -543,12 +549,17 @@ class InMemoryFilesystem(Filesystem):
             self.blocks = []
 
         def read_block(self, i:int):
+            assert self.open_count == 1
+
             if 0 <= i < len(self.blocks) :
                 return bytearray(self.blocks[i])
             return bytearray(b'')
 
         def write_block(self, i:int, data:bytes):
-            assert len(data) == BLOCK_SIZE
+            assert self.open_count == 1
+
+            if len(data) != BLOCK_SIZE :
+                raise ValueError(f"block is not {BLOCK_SIZE} bytes: {len(data)=}")
 
             if 0 <= i < len(self.blocks) :
                 self.blocks[i] = data
@@ -560,6 +571,10 @@ class InMemoryFilesystem(Filesystem):
         def close(self):
             self.open_count -= 1
             assert self.open_count == 0
+
+        def size_blocks(self):
+            return len(self.blocks)
+
 
     def open(self, filename:str, create_new_file:bool = True):
         if filename in self.files :
@@ -586,6 +601,11 @@ class OnDiskFileystem(Filesystem):
     directory:str = "db/"
     extension:str = '.db'
 
+    def __init__(self, *a, **kwa) -> None:
+        super().__init__(*a, **kwa)
+
+        if self.directory[-1] not in ('/', '\\') : self.directory.append('/')
+
     @dataclass
     class OnDiskFile(Filesystem.File):
         io:io.BufferedRandom
@@ -595,13 +615,19 @@ class OnDiskFileystem(Filesystem):
             return bytearray(self.io.read(BLOCK_SIZE))
 
         def write_block(self, i:int, data:bytes):
-            assert len(data) == BLOCK_SIZE
+            if len(data) != BLOCK_SIZE :
+                raise ValueError(f"block is not {BLOCK_SIZE} bytes: {len(data)=}")
+            i = min(i, self.size_blocks())
             self.io.seek(i * BLOCK_SIZE)
             self.io.write(data)
 
         def close(self):
             self.io.close()
             del self.io
+
+        def size_blocks(self) -> int:
+            self.io.seek(0, os.SEEK_END)
+            return self.io.tell() // BLOCK_SIZE
         
 
     def open(self, filename:str, create_new_file:bool = True) -> OnDiskFile:
@@ -611,7 +637,8 @@ class OnDiskFileystem(Filesystem):
             except FileExistsError :
                 pass
         
-        file = open(self.directory + filename + self.extension, 'ab+' if create_new_file else 'rb+') # append in binary
+        # file = open(self.directory + filename + self.extension, 'ab+' if create_new_file else 'rb+') # append in binary
+        file = os.fdopen(os.open(self.directory + filename + self.extension, os.O_RDWR | (os.O_CREAT * create_new_file)), 'rb+')
         assert isinstance(file, io.BufferedRandom)
         assert file.seekable()
         assert file.writable()

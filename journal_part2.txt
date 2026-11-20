@@ -427,3 +427,52 @@ Instead, i'm just gonna make a compact() function that frees up space by remakin
 
 https://www.geeksforgeeks.org/python/file-mode-in-python/
 turns out I need to use 'ab+' to get the behaviour I want
+
+
+https://python-reference.readthedocs.io/en/latest/docs/file/seek.html
+wow, it turns out that you can't use seek() on a file opened with 'a'. I'm glad I wrote tests, because I found this problem in one of the tests
+
+This sucks...
+'rb+' will throw an error if the file doesn't exist
+'wb+' will truncate whatever's inside the file currently
+'ab+' doesn't allow seek
+'xb+' will throw an error if the file does exist
+
+I want to open a file for reading and writing, creating it if it doesn't exist, not truncating it, and with the ability to seek and write..
+
+https://stackoverflow.com/questions/28918302/open-file-for-random-write-without-truncating
+
+as i guessed, one option is to use 'rb+' and check that the file exists beforehand, but this suffers from TOCTTOU. The other option is to use a custom os.fdopen function call:
+
+f = os.fdopen(os.open(filename, os.O_RDWR | os.O_CREAT), 'rb+')
+
+I'm not sure that this custom file descriptor nonsense will work on windows, but it's fine, i'm in a linux docker container. I have NEVER studied file opening in windows, because i hear systems programming in windows is a nightmare. 
+
+From man 3 fopen:
+
+       The file descriptor associated with the stream is opened as if by a call to open(2) with the following flags:
+              ┌──────────────┬───────────────────────────────┐
+              │ fopen() mode │ open() flags                  │
+              ├──────────────┼───────────────────────────────┤
+              │      r       │ O_RDONLY                      │
+              ├──────────────┼───────────────────────────────┤
+              │      w       │ O_WRONLY | O_CREAT | O_TRUNC  │
+              ├──────────────┼───────────────────────────────┤
+              │      a       │ O_WRONLY | O_CREAT | O_APPEND │
+              ├──────────────┼───────────────────────────────┤
+              │      r+      │ O_RDWR                        │
+              ├──────────────┼───────────────────────────────┤
+              │      w+      │ O_RDWR | O_CREAT | O_TRUNC    │
+              ├──────────────┼───────────────────────────────┤
+              │      a+      │ O_RDWR | O_CREAT | O_APPEND   │
+              └──────────────┴───────────────────────────────┘
+
+So, now my problem is obvious, the combination I want doesn't exist from fopen. I want O_RDWR | O_CREAT, but not truncate and not append
+
+Good, it's almost working, i just need to fix one more problem:
+
+file.write_block(100, data2)
+
+this is writing 98 empty blocks of \0 instead of appending to the end of the file. Maybe I should disallow this..? Or implement a routine to quickly get the length of a file, and check that I don't append past the end...?
+
+Nice!!!! tests passing for the disk filesystem. Maybe it'll be worth testing a few more niche test cases in the future, but I'm happy with this for now.
