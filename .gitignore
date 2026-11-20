@@ -1,4 +1,6 @@
 __pycache__
 *-lock.json
 asdasdasdasdas.txt
-test_data/
+test_data
+**.db
+
