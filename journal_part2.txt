@@ -476,3 +476,40 @@ file.write_block(100, data2)
 this is writing 98 empty blocks of \0 instead of appending to the end of the file. Maybe I should disallow this..? Or implement a routine to quickly get the length of a file, and check that I don't append past the end...?
 
 Nice!!!! tests passing for the disk filesystem. Maybe it'll be worth testing a few more niche test cases in the future, but I'm happy with this for now.
+
+
+Wow, earlier i listed out some classes I wanted to write to implement the storage engine, but I completely forgot that we need to write an LRU cache... I think I'll write the cache as like a wrapper around any Filesystem
+
+This cache is also a good opportunity to use the readinto1 function of the python io object, since this guarantees to use exactly one system call to do the read. If the cache makes a fixed set of bytearrays, then I can just use readinto1 to overwrite them... no memory allocation needed
+
+
+OH MY GOD i just went to the washroom and had a genius idea... the cache should provide a context manager to lease a page. So when you lease a page, the context manager guarantees that the page will be unpinned eventually. It also makes it super easy to manage the pin count of each page and of all pages in total
+
+Now, should the buffer pool gatekeep access to the filesystem? I think so... otherwise, how will cache hits happen?
+
+Also, will the buffer pool use Filesystem.File objects? The cache needs to be for each filename and page id. I hope I didn't waste my time making those lol
+
+I should probably base the design of the cache on how it'll be used. Most importantly, iter_pages over a single file, which will look like:
+
+def iter_pages(self):
+
+    directory = 0
+    while True :
+        with cache.lease(self.filename, directory) as block:
+            directory = DirectoryPage(block)
+            for data_page_id, _ in directory.iter_pages() :
+                with cache.lease(self.filename, data_page_id) as block:
+                    yield from SlottedPage(block).iter_records()
+
+here, it basically doesn't matter that HeapDatastore is an object, because all we use is the filename...
+
+this cache would be responsible for keeping a reference to a filesystem, and keeping a cache of Filesystem.Files (that is, open file descriptors)
+
+maybe cache.lease takes a Filesystem.File instead of a filename...? So the caller is responsible for opening a file, and then the cache makes use of the filesystem.file abstraction. The only other change necessary to make this idea work is that files would need to hold onto their filename as well (this is a key to the cache)
+
+The assignment spec doesn't really say anything about how to handle a multiple-file cache. The cache size is B, is that B blocks per file, or B blocks over all files? Can the cache have blocks from different files? 
+
+The cache could also be a relativelyt complex abstraction that works like the other filesystems. cache defines its own Cache.File abstraction (just like Filesystem.File), but you get Cache.Files from a context manager, and you get pages from the file through a context manager too. This would all make sense if open file descriptors AND blocks ought to be cached in a buffer pool, which I think makes sense. 
+
+I think i'm done coding for the night.... still really unsure about the cache though I am very confident i want to use a context manager somewhere in there
+

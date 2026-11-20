@@ -604,7 +604,8 @@ class OnDiskFileystem(Filesystem):
     def __init__(self, *a, **kwa) -> None:
         super().__init__(*a, **kwa)
 
-        if self.directory[-1] not in ('/', '\\') : self.directory.append('/')
+        if self.directory[-1] not in ('/', '\\') : self.directory += '/'
+
 
     @dataclass
     class OnDiskFile(Filesystem.File):
@@ -654,6 +655,34 @@ class OnDiskFileystem(Filesystem):
             pass
 
 
+from typing import TypeVar, Generic
+LRU_KEY = TypeVar('LRU_KEY')
+LRU_VALUE = TypeVar('LRU_VALUE')
+
+class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
+
+    cache: list[tuple[LRU_VALUE, int]]
+    cache_index: dict[tuple[str, int], LRU_VALUE]
+
+    def __init__(self, cache_size:int) -> None:
+        super().__init__()
+
+    @contextmanager
+    def get(self, key:LRU_KEY) -> LRU_VALUE:
+        pass
+
+
+class PageBufferPool:
+    cache: list[bytearray]
+    cache_index: dict[tuple[str, int], bytearray]
+
+    filesystem
+
+    def __init__(self, num_pages_cached:int = 10) -> None:
+        pass
+
+    
+
 
 INTCONFIG = {"byteorder": "little", "signed": False}
 
@@ -663,6 +692,7 @@ INTCONFIG = {"byteorder": "little", "signed": False}
 
 class PageFullException(BaseException):
     pass
+
 
 @dataclass
 class SlottedPage:
@@ -797,7 +827,7 @@ class DirectoryPage:
 
     def __getitem__(self, key:int):
         entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
-        if not self.HEADER_SIZE <= entry_start < 4096-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+        if not self.HEADER_SIZE <= entry_start < BLOCK_SIZE-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
 
         raw = self.raw[entry_start:entry_start+self.ENTRY_LENGTH]
 
@@ -805,7 +835,7 @@ class DirectoryPage:
 
     def __setitem__(self, key:int, val:tuple[int,int] ):
         entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
-        if not self.HEADER_SIZE <= entry_start < 4096-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+        if not self.HEADER_SIZE <= entry_start < BLOCK_SIZE-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
         data_page_id, free_space = val
 
         self.raw[entry_start:entry_start+4] = data_page_id.to_bytes(**INTCONFIG, length=4)
@@ -824,7 +854,14 @@ class DirectoryPage:
 
 @dataclass
 class HeapDatastore:
-    pass
+    
+    file: Filesystem.File
+
+    def add_record():
+        pass
+
+
+
 
 class Database:
 
