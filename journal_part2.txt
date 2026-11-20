@@ -419,3 +419,11 @@ Compaction / making use of empty space in data pages (slotted pages) is not nece
 I think heapfiles (with directory pages) are only useful if they let you quickly find empty spaces in old pages... i might implement like a "largest free subsequence" property of data pages that gets stored in their corresponding directory page, so when you want to insert a record, you find the first page which has a free subsequence big enough to fit that record.
 
 Also, this system just cannot handle records larger than like 4k bytes... obviously i could make blocks larger but that's a serious limitation
+
+
+I just spend a while trying to fumble around with an algorithm to calculate the longest available subsequence of bytes in a slotted page. I'm deciding not to do this, since the algorithm ended up being kinda complex, and it would also make insertion more complex.
+
+Instead, i'm just gonna make a compact() function that frees up space by remaking the whole page. I think this is fine since it doesn't add any more hard drive reads/writes than would already happen after an insert.
+
+https://www.geeksforgeeks.org/python/file-mode-in-python/
+turns out I need to use 'ab+' to get the behaviour I want

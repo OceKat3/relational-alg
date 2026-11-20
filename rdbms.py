@@ -479,48 +479,135 @@ class SQLContext:
     def tables_in_scope(*tables: Table):
         with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
             yield
-        
-class Database:
 
-    def get_table_by_name(self, name:str) -> Table | None:
-        raise NotImplementedError()
 
-    def read_rows_from_table(self, name:str) -> Generator[tuple]:
-        raise NotImplementedError()
+BLOCK_SIZE = 4096
 
-    def write_rows_to_table(self, name:str, rows:Iterable[tuple]):
-        raise NotImplementedError()
-
-    def create_table(self, table:Table):
-        raise NotImplementedError()
-
-class InMemoryFilesystem:
-    BLOCK_SIZE = 4096
+# class InMemoryFilesystem:
+#     BLOCK_SIZE = 4096
     
-    files: dict[str, list[bytearray]]
-    def __init__(self) -> None:
+#     files: dict[str, list[bytearray]]
+#     def __init__(self) -> None:
+#         self.files = {}
+
+#     def create_file(self, name:str):
+#         if name in self.files :
+#             raise FileExistsError()
+#         self.files[name] = [bytearray(self.BLOCK_SIZE)]
+
+#     def get_file(self, filename:str):
+#         if filename not in self.files :
+#             raise FileNotFoundError()
+#         return self.files[filename]
+
+#     def iter_blocks(self, filename:str):
+#         if filename not in self.files :
+#             raise FileNotFoundError()
+#         yield from self.files[filename]
+
+#     def grow(self, filename:str):
+#         if filename not in self.files :
+#             raise FileNotFoundError()
+#         self.files[filename].append(bytearray(self.BLOCK_SIZE))
+
+
+class Filesystem:
+
+    class File:
+
+        def read_block(self, i:int) -> bytearray:
+            pass
+        
+        def write_block(self, i:int, data:bytes):
+            pass
+
+        def close():
+            pass
+
+
+    def open(self, filename:str) -> File:
+        raise NotImplementedError()
+
+class InMemoryFilesystem(Filesystem):
+
+    files:dict[str, InMemoryFile]
+    def __init__(self):
         self.files = {}
 
-    def create_file(self, name:str):
-        if name in self.files :
-            raise FileExistsError()
-        self.files[name] = [bytearray(self.BLOCK_SIZE)]
+    class InMemoryFile(Filesystem.File):
 
-    def get_file(self, filename:str):
-        if filename not in self.files :
-            raise FileNotFoundError()
-        return self.files[filename]
+        blocks: list[bytes]
+        open_count: int = 0
 
-    def iter_blocks(self, filename:str):
-        if filename not in self.files :
-            raise FileNotFoundError()
-        yield from self.files[filename]
+        def __init__(self):
+            self.blocks = []
 
-    def grow(self, filename:str):
-        if filename not in self.files :
-            raise FileNotFoundError()
-        self.files[filename].append(bytearray(self.BLOCK_SIZE))
-    
+        def read_block(self, i:int):
+            if 0 <= i < len(self.blocks) :
+                return bytearray(self.blocks[i])
+            return bytearray(b'')
+
+        def write_block(self, i:int, data:bytes):
+            assert len(data) == BLOCK_SIZE
+
+            if 0 <= i < len(self.blocks) :
+                self.blocks[i] = data
+            elif i >= len(self.blocks) :
+                self.blocks.append(data)
+            else :
+                raise IndexError(i)
+
+        def close(self):
+            self.open_count -= 1
+            assert self.open_count == 0
+
+    def open(self, filename:str):
+        if filename in self.files :
+            file = self.files[filename]
+            file.open_count += 1
+            return file
+        else:
+            file = self.InMemoryFile()
+            self.files[filename] = file
+            file.open_count += 1
+            return file
+
+
+import io
+
+@dataclass
+class OnDiskFileystem(Filesystem):
+
+    db_directory:str = "db/"
+
+    @dataclass
+    class OnDiskFile(Filesystem.File):
+        io:io.BufferedRandom
+
+        def read_block(self, i:int):
+            self.io.seek(i * BLOCK_SIZE)
+            return bytearray(self.io.read(BLOCK_SIZE))
+
+        def write_block(self, i:int, data:bytes):
+            assert len(data) == BLOCK_SIZE
+            self.io.seek(i * BLOCK_SIZE)
+            self.io.write(data)
+
+        def close(self):
+            self.io.close()
+            del self.io
+        
+
+    def open(self, filename:str) -> OnDiskFile:
+        file = open(self.db_directory + filename, 'ab+') # append in binary
+        assert isinstance(file, io.BufferedRandom)
+        assert file.seekable()
+        assert file.writable()
+        assert file.readable()
+        return self.OnDiskFile(file)
+
+
+
 INTCONFIG = {"byteorder": "little", "signed": False}
 
 # assignment says we have to use this format
@@ -533,13 +620,21 @@ class PageFullException(BaseException):
 @dataclass
 class SlottedPage:
 
+    #  header   
+    #  slot     HEADER_LENGTH
+    #  slot     
+    #  ...      free_start = HEADER_LENGTH + slot_count * SLOT_LENGTH
+    #  ...
+    #  record   free_end
+    #  record
+
     raw: bytearray
 
     def initialize(self, page_id:int):
         self.page_id = page_id
         self.slot_count = 0
         self.free_end = len(self.raw)
-        assert len(self.raw) == InMemoryFilesystem.BLOCK_SIZE
+        assert len(self.raw) == BLOCK_SIZE
     
     HEADER_LENGTH = 8
     SLOT_LENGTH = 4
@@ -553,6 +648,12 @@ class SlottedPage:
     @property
     def free_end(self) -> int:
         return int.from_bytes(self.raw[6:8], **INTCONFIG)
+    
+    # is this completely useless lol
+    @property
+    def free_start(self) -> int:
+        return self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH
+
 
     @page_id.setter
     def page_id(self, val:int):
@@ -564,37 +665,56 @@ class SlottedPage:
     def free_end(self, val:int):
         self.raw[6:8] = val.to_bytes(**INTCONFIG, length=2)
 
+
+    @property
+    def free_space(self) -> int:
+        return self.free_end - self.free_start
+    
+    
+    def read_slot(self, i:int) -> tuple[int, int] | None :
+        slot_start = self.HEADER_LENGTH + i * self.SLOT_LENGTH
+
+        record_offset = int.from_bytes(self.raw[slot_start:slot_start+2], **INTCONFIG)
+        record_length = int.from_bytes(self.raw[slot_start+2:slot_start+4], **INTCONFIG)
+
+        if record_offset == record_length == 0 : return None
+
+        return record_offset, record_length
+
     def iter_records(self) -> Generator[bytes]:
         for i in range(self.slot_count) :
-            slot_start = self.HEADER_LENGTH + i * self.SLOT_LENGTH
-
-            record_offset = int.from_bytes(self.raw[slot_start:slot_start+2], **INTCONFIG)
-            record_length = int.from_bytes(self.raw[slot_start+2:slot_start+4], **INTCONFIG)
-
-            if record_offset == record_length == 0 : continue
+            
+            slot = self.read_slot(i)
+            if not slot : continue
+            record_offset, record_length = slot
 
             record = bytes(self.raw)[record_offset:record_offset+record_length]
             yield record
 
     def add_record(self, new_record:bytes):
-        available_space = self.free_end - (self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH)
+        available_space = self.free_space
         required_space = len(new_record) + self.SLOT_LENGTH
-        if available_space < required_space :
+        if self.free_space < required_space :
             raise PageFullException()
 
-        next_slot_start = self.HEADER_LENGTH + self.slot_count * self.SLOT_LENGTH
+        next_slot_start = self.free_start
         record_length = len(new_record)
         record_offset = self.free_end - record_length
         self.raw[next_slot_start:next_slot_start+2] = record_offset.to_bytes(**INTCONFIG, length=2)
         self.raw[next_slot_start+2:next_slot_start+4] = record_length.to_bytes(**INTCONFIG, length=2)
         
         self.raw[record_offset:record_offset+record_length] = new_record
+
         self.free_end = record_offset
         self.slot_count += 1
 
-    def calculate_free_space() -> int:
-        pass
-    
+    def compact(self):
+        records = list(self.iter_records())
+        self.initialize(self.page_id)
+        for record in records:
+            self.add_record(record)
+
+
 
 @dataclass
 class DirectoryPage:
@@ -655,6 +775,23 @@ class DirectoryPage:
         for i in range(self.entry_count) :
             yield self[i]
 
+@dataclass
+class HeapDatastore:
+    pass
+
+class Database:
+
+    def get_table_by_name(self, name:str) -> Table | None:
+        raise NotImplementedError()
+
+    def read_rows_from_table(self, name:str) -> Generator[tuple]:
+        raise NotImplementedError()
+
+    def write_rows_to_table(self, name:str, rows:Iterable[tuple]):
+        raise NotImplementedError()
+
+    def create_table(self, table:Table):
+        raise NotImplementedError()
 
 class InMemoryDatabase(Database):
 
