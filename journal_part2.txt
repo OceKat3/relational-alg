@@ -513,3 +513,8 @@ The cache could also be a relativelyt complex abstraction that works like the ot
 
 I think i'm done coding for the night.... still really unsure about the cache though I am very confident i want to use a context manager somewhere in there
 
+Alright, i don't think I'm gonna get caching to work with readinto1, the super efficient function that guaranteed only makes one system call...
+
+I'm gonna make a generic LRU cache which uses a linked list and a dict and then PageBufferPool will contain two of those, one LRUCache[tuple[int, str], bytearray] and one LRUCache[str, Filesystem.File]
+
+like basically there is a cache of open files and there is a cache of pages within files. It should be possible to read pages from a file without even opening it!

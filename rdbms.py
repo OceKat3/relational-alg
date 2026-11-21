@@ -655,21 +655,52 @@ class OnDiskFileystem(Filesystem):
             pass
 
 
-from typing import TypeVar, Generic
-LRU_KEY = TypeVar('LRU_KEY')
+from typing import TypeVar, Generic, Hashable
+LRU_KEY = TypeVar('LRU_KEY', bound=Hashable)
 LRU_VALUE = TypeVar('LRU_VALUE')
+
+# linked list with python datacasses :(
+# top 10 worst ideas ever
+
+@dataclass
+class CacheItem(Generic[LRU_KEY, LRU_VALUE]):
+    data: LRU_VALUE
+    key: LRU_KEY
+    pinned: bool = False
+
+    next: CacheItem | None = None
+    prev: CacheItem | None = None
+
 
 class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
 
-    cache: list[tuple[LRU_VALUE, int]]
-    cache_index: dict[tuple[str, int], LRU_VALUE]
+
+    most_recently_used: CacheItem
+    least_recently_used: CacheItem
+    cache_index: dict[LRU_KEY, LRU_VALUE]
 
     def __init__(self, cache_size:int) -> None:
         super().__init__()
 
-    @contextmanager
-    def get(self, key:LRU_KEY) -> LRU_VALUE:
+    def get(self, key:LRU_KEY) -> LRU_VALUE | None:
+        if key in self.cache_index :
+            return self.cache_index[key]
+
+    def set(self, key:LRU_KEY, val:LRU_VALUE):
         pass
+
+    pin_count:int = 0
+
+    def pin(self, key:LRU_KEY):
+        pass
+
+    def unpin(self ,key:LRU_KEY):
+        pass
+
+    def find_victim(self) -> CacheItem[LRU_KEY, LRU_VALUE] | None:
+        node = self.least_recently_used
+        while node and node.pinned : node = node.prev
+        return node
 
 
 class PageBufferPool:
