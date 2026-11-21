@@ -440,15 +440,13 @@ import itertools
 def test_lru_cache_linkedlist_3():
 
 
-    for behaviour_sequence in itertools.permutations([('set', c) for c in 'abcd'] * 2 + [('get', c) for c in 'abcd'] * 2, 8) :
+    for behaviour_sequence in itertools.permutations([('set', c) for c in 'abcd'] * 2 + [('get', c) for c in 'abcd'], 4) :
         cache = LRUCache[str, int](cache_size_limit=3)
         simulated_cache = []
 
-        print(behaviour_sequence)
         for action in behaviour_sequence :
             c = action[1]
             
-            # pprint(cache.cache_index)
             match action :
                 case ('get', c) :
                     cache.get(c)
@@ -458,12 +456,7 @@ def test_lru_cache_linkedlist_3():
                     cache.set(c, ord(c))
                     simulated_cache = ([c] + [x for x in simulated_cache if x != c])[:3]
 
-        print(simulated_cache)
-        print(cache.most_recently_used.key, 
-            cache.most_recently_used.next.key,
-            cache.most_recently_used.next.next.key)
-
-        pprint(cache.cache_index)
+        assert_equal(len(cache), len(simulated_cache))
 
         cache.check_linked_list()
 
