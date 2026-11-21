@@ -518,3 +518,8 @@ Alright, i don't think I'm gonna get caching to work with readinto1, the super e
 I'm gonna make a generic LRU cache which uses a linked list and a dict and then PageBufferPool will contain two of those, one LRUCache[tuple[int, str], bytearray] and one LRUCache[str, Filesystem.File]
 
 like basically there is a cache of open files and there is a cache of pages within files. It should be possible to read pages from a file without even opening it!
+
+
+Wow pylance/pyright typechecker really saved my ass when writing this linked list implementation
+
+this is like the 100th linked list ive written in my life and i still cant get it right the first time lol

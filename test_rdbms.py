@@ -373,6 +373,27 @@ def test_disk_filesystem_creates_directory():
     except: pass
     
 
+from rdbms import LRUCache
+
+def test_lru_cache_linkedlist():
+
+    cache = LRUCache[str, int](cache_size_limit=3)
+
+    cache.set('a', 1)
+    cache.set('b', 2)
+    cache.set('c', 3)
+
+    assert_equal(cache.get('a'), 1)
+    assert_equal(cache.get('b'), 2)
+    assert_equal(cache.get('c'), 3)
+    assert_equal(cache.get('d'), None)
+        
+    cache.set('a', 40)
+    cache.set('d', 5)
+
+    assert_equal(cache.get('a'), 40)
+    assert_equal(cache.get('d'), 5)
+    assert_equal(cache.get('b'), None)
 
 
 

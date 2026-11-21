@@ -601,12 +601,6 @@ class OnDiskFileystem(Filesystem):
     directory:str = "db/"
     extension:str = '.db'
 
-    def __init__(self, *a, **kwa) -> None:
-        super().__init__(*a, **kwa)
-
-        if self.directory[-1] not in ('/', '\\') : self.directory += '/'
-
-
     @dataclass
     class OnDiskFile(Filesystem.File):
         io:io.BufferedRandom
@@ -629,9 +623,12 @@ class OnDiskFileystem(Filesystem):
         def size_blocks(self) -> int:
             self.io.seek(0, os.SEEK_END)
             return self.io.tell() // BLOCK_SIZE
-        
+
+    def fix_directory(self):
+        if self.directory[-1] not in ('/', '\\') : self.directory += '/'
 
     def open(self, filename:str, create_new_file:bool = True) -> OnDiskFile:
+        self.fix_directory()
         if create_new_file :
             try :
                 os.makedirs(self.directory)
@@ -647,6 +644,7 @@ class OnDiskFileystem(Filesystem):
         return self.OnDiskFile(file)
 
     def clean_directory(self):
+        self.fix_directory()
         try :
             for file in os.listdir(self.directory) :
                 if file.endswith(self.extension) :
@@ -671,23 +669,58 @@ class CacheItem(Generic[LRU_KEY, LRU_VALUE]):
     next: CacheItem | None = None
     prev: CacheItem | None = None
 
-
 class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
 
+    most_recently_used: CacheItem[LRU_KEY, LRU_VALUE] | None = None
+    least_recently_used: CacheItem[LRU_KEY, LRU_VALUE] | None = None
+    cache_index: dict[LRU_KEY, CacheItem[LRU_KEY, LRU_VALUE]]
 
-    most_recently_used: CacheItem
-    least_recently_used: CacheItem
-    cache_index: dict[LRU_KEY, LRU_VALUE]
+    cache_size_limit:int
 
-    def __init__(self, cache_size:int) -> None:
-        super().__init__()
+    class TooManyPinnedError(BaseException):
+        pass
+
+    def __init__(self,cache_size_limit:int = 64) -> None:
+        
+        self.cache_size_limit = cache_size_limit
+        assert self.cache_size_limit > 1
+        
+        self.cache_index = {}
+
+    def __len__(self):
+        return len(self.cache_index)
 
     def get(self, key:LRU_KEY) -> LRU_VALUE | None:
         if key in self.cache_index :
-            return self.cache_index[key]
+            return self.cache_index[key].data
+        return None
 
     def set(self, key:LRU_KEY, val:LRU_VALUE):
-        pass
+        if key in self.cache_index :
+            node = self.cache_index[key]
+            node.data = val
+        else :
+            if len(self) < self.cache_size_limit :
+                node = CacheItem[LRU_KEY, LRU_VALUE](data=val, key=key)
+            else :
+                node = self.find_victim()
+                if not node :
+                    raise self.TooManyPinnedError()
+                node.data = val
+                
+        if node.prev :
+            node.prev.next = node.next
+        if node.next :
+            node.next.prev = node.prev
+
+        if self.most_recently_used :
+            node.next = self.most_recently_used
+            self.most_recently_used.prev = node
+        if not self.least_recently_used :
+            self.least_recently_used = node
+        self.most_recently_used = node
+        
+        self.cache_index[key] = node
 
     pin_count:int = 0
 
@@ -707,7 +740,7 @@ class PageBufferPool:
     cache: list[bytearray]
     cache_index: dict[tuple[str, int], bytearray]
 
-    filesystem
+    # filesystem
 
     def __init__(self, num_pages_cached:int = 10) -> None:
         pass
