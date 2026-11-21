@@ -664,7 +664,10 @@ LRU_VALUE = TypeVar('LRU_VALUE')
 class CacheItem(Generic[LRU_KEY, LRU_VALUE]):
     data: LRU_VALUE
     key: LRU_KEY
-    pinned: bool = False
+
+    pin_count: int = 0
+    @property
+    def pinned(self): return self.pin_count > 0
 
     next: CacheItem | None = None
     prev: CacheItem | None = None
@@ -716,6 +719,8 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
         if self.least_recently_used == node :
             self.least_recently_used = node.prev
 
+        node.prev = None
+
         if self.most_recently_used :
             node.next = self.most_recently_used
             self.most_recently_used.prev = node
@@ -728,15 +733,42 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
     pin_count:int = 0
 
     def pin(self, key:LRU_KEY):
-        pass
+        if key not in self.cache_index :
+            raise KeyError(key, self.cache_index.keys())
+        self.cache_index[key].pin_count += 1
+        self.pin_count += 1
 
     def unpin(self ,key:LRU_KEY):
-        pass
+        if key not in self.cache_index :
+            raise KeyError(key, self.cache_index.keys())
+        self.cache_index[key].pin_count -= 1
+        self.pin_count -= 1
+        assert self.pin_count >= 0
 
     def find_victim(self) -> CacheItem[LRU_KEY, LRU_VALUE] | None:
         node = self.least_recently_used
-        while node and node.pinned : node = node.prev
+        while node and node.pinned : 
+            node = node.prev
         return node
+
+    def check_linked_list(self):
+        assert False
+        node = self.least_recently_used
+        seen_set:set[CacheItem] = set()
+        while node and node.pinned : 
+            if node in seen_set :
+                raise AssertionError('circularity in linked list in backwards direction')
+            seen_set.add(node)
+            node = node.prev
+
+        node = self.most_recently_used
+        seen_set:set[CacheItem] = set()
+        while node and node.pinned : 
+            if node in seen_set :
+                raise AssertionError('circularity in linked list in forwards direction')
+            seen_set.add(node)
+            node = node.next
+        
 
 
 class PageBufferPool:

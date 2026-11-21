@@ -41,7 +41,7 @@ def expect_failure(*errors: type[BaseException]):
     except errors :
         pass
     except BaseException as e :
-        raise AssertionError(f"block raised an unexpected error: ", e)
+        raise AssertionError(f"block raised an unexpected error: ", e) from e
     else:
         raise AssertionError(f"block did not raise any errors, was expecting one of: {errors}")
 
@@ -419,6 +419,19 @@ def test_lru_cache_linkedlist():
     assert_equal(cache.get('b'), 100)
     assert_equal(cache.get('c'), None)
 
+    cache.check_linked_list()
+
+def test_lru_cache_linkedlist_2():
+
+    cache = LRUCache[str, int](cache_size_limit=64)
+
+    cache.set('a', 1)
+    cache.set('a', 2)
+    cache.set('a', 3)
+    cache.set('a', 4)
+
+    assert_equal(cache.get('a'), 4)
+
 def test_lru_cache_pins():
 
     cache = LRUCache[str, int](cache_size_limit=3)
@@ -456,6 +469,9 @@ def test_lru_cache_pins():
     cache.pin('e')
 
     # [e] [d] [a]
+
+    # pprint(cache.cache_index)
+    # cache.check_linked_list()
 
     with expect_failure(cache.TooManyPinnedError) :
         cache.set('f', 6)
