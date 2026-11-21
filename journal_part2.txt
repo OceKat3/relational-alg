@@ -525,3 +525,40 @@ Wow pylance/pyright typechecker really saved my ass when writing this linked lis
 this is like the 100th linked list ive written in my life and i still cant get it right the first time lol
 
 Nice, the cache linked list seeeems to work just fine now. I need to get pins working, then implement the lru cache in PageBufferPool, which i'll do after cleaning my house
+
+
+
+I'm not really happy with my solution to the combined page and file cache.... i did some upvalue bullshit that will maybe bite me in the ass later
+
+def RentedFile(self, filename:str, file:Filesystem.File) -> Callable[[int], _GeneratorContextManager[bytearray, None, None]]:
+    @contextmanager
+    def lease_page(i:int):
+        page_key = (filename, i)
+        page = self.page_cache.get(page_key)
+
+        if not page :
+            # TODO could make an io.readinto1 optimization here
+            page = file.read_block(i)
+            for old_page in self.page_cache.set(page_key, page) :
+                del old_page #probably not necessary since old bytearrays will get garbage collected anyway
+        self.page_cache.pin(page_key)
+        try:
+            yield page
+        finally:
+            self.page_cache.unpin(page_key)
+
+    return lease_page
+
+yeah shiiiitt upvalues are not gonna work since the resulting file needs to allow reads and writes
+
+
+
+
+section 5.2 of module 1 of the assignment specification is completely uniltelligible.... this is not how I implemented my lru cache, i don't have a clock or anything. I think my lru cache works just fine so i won't worry about it
+
+
+Just realized there were a few missing details in my LRU cache implementation, which have been showing up in tests.... i'm really glad i test my code, i would never find these errors by staring at the code lol
+
+For example, get() needs to trigger a reorder since that counts as "using" the value in the cache... which also means I need a rawget function so tests can look into the cache without triggering a reorder
+
+grrrr something is really fucked up in my lru cache, it's failing the test that checks like 12! permutations of input patterns 

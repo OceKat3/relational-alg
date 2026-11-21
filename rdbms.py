@@ -701,11 +701,17 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
             return node.data
         return None
 
+    def rawget(self, key:LRU_KEY) -> LRU_VALUE | None :
+        if key in self.cache_index :
+            return self.cache_index[key].data
+        return None
+
     # yield the old value if it gets replaced
-    def set(self, key:LRU_KEY, val:LRU_VALUE):
+    def set(self, key:LRU_KEY, val:LRU_VALUE) -> LRU_VALUE | None:
+        old_data = None
         if key in self.cache_index :
             node = self.cache_index[key]
-            yield node.data
+            old_data = node.data
             node.data = val
         else :
             if len(self) < self.cache_size_limit :
@@ -714,19 +720,23 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
                 node = self.find_victim()
                 if not node :
                     raise self.TooManyPinnedError()
-                yield node.data
+                old_data = node.data
                 del self.cache_index[node.key]
                 node.data = val
+                node.key = key
 
         self.move_to_front(node)
         self.cache_index[key] = node
-        
+        return old_data
+
     def move_to_front(self, node:CacheItem[LRU_KEY, LRU_VALUE]):
+        if node is self.most_recently_used : return
+
         if node.prev :
             node.prev.next = node.next
         if node.next :
             node.next.prev = node.prev
-        if self.least_recently_used == node :
+        if self.least_recently_used is node :
             self.least_recently_used = node.prev
 
         node.prev = None
@@ -734,8 +744,12 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
         if self.most_recently_used :
             node.next = self.most_recently_used
             self.most_recently_used.prev = node
-        if not self.least_recently_used :
+        else :
+            node.next = None
+        
+        if self.least_recently_used is None :
             self.least_recently_used = node
+        
         self.most_recently_used = node
 
 
@@ -761,21 +775,21 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
         return node
 
     def check_linked_list(self):
-        assert False
+        
         node = self.least_recently_used
-        seen_set:set[CacheItem] = set()
+        seen_set:set[LRU_KEY] = set()
         while node and node.pinned : 
             if node in seen_set :
                 raise AssertionError('circularity in linked list in backwards direction')
-            seen_set.add(node)
+            seen_set.add(node.key)
             node = node.prev
 
         node = self.most_recently_used
-        seen_set:set[CacheItem] = set()
+        seen_set:set[LRU_KEY] = set()
         while node and node.pinned : 
             if node in seen_set :
                 raise AssertionError('circularity in linked list in forwards direction')
-            seen_set.add(node)
+            seen_set.add(node.key)
             node = node.next
         
 from contextlib import _GeneratorContextManager
@@ -786,34 +800,42 @@ class Landlord:
 
     fs: Filesystem
 
-    # @dataclass
-    # class RentedFile:
-    #     filename: str
-    #     file: Filesystem.File
+    @dataclass
+    class RentedFile:
+        filename: str
+        file: Filesystem.File
+        landlord: Landlord
 
-    #     @contextmanager
-    #     def lease_page(self, i:int):
-    #         pass
+        @property
+        def page_cache(self): return self.landlord.page_cache
 
-    # this is way overcomplicated just to try and give the client code a really specific syntax
-    def RentedFile(self, filename:str, file:Filesystem.File) -> Callable[[int], _GeneratorContextManager[bytearray, None, None]]:
         @contextmanager
-        def lease_page(i:int):
-            page_key = (filename, i)
+        def lease_page(self, i:int):
+            page_key = (self.filename, i)
             page = self.page_cache.get(page_key)
 
             if not page :
                 # TODO could make an io.readinto1 optimization here
-                page = file.read_block(i)
-                for old_page in self.page_cache.set(page_key, page) :
+                page = self.file.read_block(i)
+                old_page = self.page_cache.set(page_key, page)
+                if old_page :
                     del old_page #probably not necessary since old bytearrays will get garbage collected anyway
             self.page_cache.pin(page_key)
             try:
                 yield page
             finally:
                 self.page_cache.unpin(page_key)
+    
+        def write_page(self, i:int, data:bytes):
+            page_key = (self.filename, i)
 
-        return lease_page
+            self.file.write_block(i, data)
+
+            buffer = self.page_cache.get(page_key)
+            if buffer :
+                pass
+            else :
+                self.page_cache.set(page_key, data)
 
     def __init__(self, fs:Filesystem, num_pages_cached:int = 10, num_files_cached:int = 10) -> None:
 
@@ -827,12 +849,13 @@ class Landlord:
 
         if not file :
             file = self.fs.open(filename)
-            for victim in self.file_cache.set(filename, file) :
-                victim.close()            
+            old_file = self.file_cache.set(filename, file)
+            if old_file :
+                old_file.close()            
 
         self.file_cache.pin(filename)
         try :
-            yield self.RentedFile(filename, file)
+            yield self.RentedFile(filename, file, self)
         finally :
             pass
         

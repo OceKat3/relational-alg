@@ -380,48 +380,48 @@ def test_lru_cache_linkedlist():
     cache = LRUCache[str, int](cache_size_limit=3)
 
     cache.set('a', 1)
-    assert_equal(cache.get('a'), 1)
+    assert_equal(cache.rawget('a'), 1)
     
     cache.set('b', 2)
     cache.set('c', 3)
 
     # c b a
     
-    assert_equal(cache.get('a'), 1)
-    assert_equal(cache.get('b'), 2)
-    assert_equal(cache.get('c'), 3)
-    assert_equal(cache.get('d'), None)
+    assert_equal(cache.rawget('a'), 1)
+    assert_equal(cache.rawget('b'), 2)
+    assert_equal(cache.rawget('c'), 3)
+    assert_equal(cache.rawget('d'), None)
 
     cache.set('a', 40)
     # a c b
     cache.set('d', 5)
     # d a c
 
-    assert_equal(cache.get('a'), 40)
-    assert_equal(cache.get('d'), 5)
-    assert_equal(cache.get('b'), None)
-    assert_equal(cache.get('c'), 3)
+    assert_equal(cache.rawget('a'), 40)
+    assert_equal(cache.rawget('d'), 5)
+    assert_equal(cache.rawget('b'), None)
+    assert_equal(cache.rawget('c'), 3)
 
     cache.set('a', 50)
     # a d c
 
-    assert_equal(cache.get('a'), 50)
-    assert_equal(cache.get('d'), 5)
-    assert_equal(cache.get('b'), None)
-    assert_equal(cache.get('c'), 3)
+    assert_equal(cache.rawget('a'), 50)
+    assert_equal(cache.rawget('d'), 5)
+    assert_equal(cache.rawget('b'), None)
+    assert_equal(cache.rawget('c'), 3)
 
     cache.set('b', 100)
 
     # b a d
 
-    assert_equal(cache.get('a'), 50)
-    assert_equal(cache.get('d'), 5)
-    assert_equal(cache.get('b'), 100)
-    assert_equal(cache.get('c'), None)
+    assert_equal(cache.rawget('a'), 50)
+    assert_equal(cache.rawget('d'), 5)
+    assert_equal(cache.rawget('b'), 100)
+    assert_equal(cache.rawget('c'), None)
 
-    assert_equal(len(cache.cache_index), 3)
+    assert_equal(len(cache), 3)
     assert_equal(cache.most_recently_used.prev, None) #type: ignore
-    assert_equal(cache.most_recently_used.next, None) #type: ignore
+    assert_equal(cache.least_recently_used.next, None) #type: ignore
 
 def test_lru_cache_linkedlist_2():
 
@@ -433,6 +433,53 @@ def test_lru_cache_linkedlist_2():
     cache.set('a', 4)
 
     assert_equal(cache.get('a'), 4)
+    assert_equal(len(cache), 1)
+
+import itertools
+
+def test_lru_cache_linkedlist_3():
+
+
+    for behaviour_sequence in itertools.permutations([('set', c) for c in 'abcd'] * 2 + [('get', c) for c in 'abcd'] * 2, 8) :
+        cache = LRUCache[str, int](cache_size_limit=3)
+        simulated_cache = []
+
+        print(behaviour_sequence)
+        for action in behaviour_sequence :
+            c = action[1]
+            
+            # pprint(cache.cache_index)
+            match action :
+                case ('get', c) :
+                    cache.get(c)
+                    if c in simulated_cache :
+                        simulated_cache = ([c] + [x for x in simulated_cache if x != c])[:3]
+                case ('set', c) :
+                    cache.set(c, ord(c))
+                    simulated_cache = ([c] + [x for x in simulated_cache if x != c])[:3]
+
+        print(simulated_cache)
+        print(cache.most_recently_used.key, 
+            cache.most_recently_used.next.key,
+            cache.most_recently_used.next.next.key)
+
+        pprint(cache.cache_index)
+
+        cache.check_linked_list()
+
+        cur = cache.most_recently_used
+        for c in simulated_cache :
+            assert cur
+            assert_equal(cur.key, c)
+            cur = cur.next
+
+        cur = cache.least_recently_used
+        for c in reversed(simulated_cache) :
+            assert cur
+            assert_equal(cur.key, c)
+            cur = cur.prev
+
+
 
 def test_lru_cache_pins():
 
@@ -452,21 +499,21 @@ def test_lru_cache_pins():
     cache.set('d', 4)
     # d c [a]
 
-    assert_equal(cache.get('a'), 1)
-    assert_equal(cache.get('b'), None)
-    assert_equal(cache.get('c'), 3)
-    assert_equal(cache.get('d'), 4)
+    assert_equal(cache.rawget('a'), 1)
+    assert_equal(cache.rawget('b'), None)
+    assert_equal(cache.rawget('c'), 3)
+    assert_equal(cache.rawget('d'), 4)
 
     cache.pin('d')
     cache.set('e', 5)
 
     # e [d] [a]
 
-    assert_equal(cache.get('a'), 1)
-    assert_equal(cache.get('b'), None)
-    assert_equal(cache.get('c'), None)
-    assert_equal(cache.get('d'), 4)
-    assert_equal(cache.get('e'), 5)
+    assert_equal(cache.rawget('a'), 1)
+    assert_equal(cache.rawget('b'), None)
+    assert_equal(cache.rawget('c'), None)
+    assert_equal(cache.rawget('d'), 4)
+    assert_equal(cache.rawget('e'), 5)
 
     cache.pin('e')
 
@@ -483,17 +530,17 @@ def test_lru_cache_move_to_front_after_calling_get():
     cache = LRUCache[str, int](cache_size_limit=3)
     
     cache.set('a', 1)
-    assert_equal(cache.get('a'), 1)
+    assert_equal(cache.rawget('a'), 1)
     
     cache.set('b', 2)
     cache.set('c', 3)
 
     # c b a
     
-    assert_equal(cache.get('a'), 1)
-    assert_equal(cache.get('b'), 2)
-    assert_equal(cache.get('c'), 3)
-    assert_equal(cache.get('d'), None)
+    assert_equal(cache.rawget('a'), 1)
+    assert_equal(cache.rawget('b'), 2)
+    assert_equal(cache.rawget('c'), 3)
+    assert_equal(cache.rawget('d'), None)
 
     cache.set('a', 40)
     # a c b
@@ -503,10 +550,26 @@ def test_lru_cache_move_to_front_after_calling_get():
     cache.set('d', 5)
     # d b a
 
-    assert_equal(cache.get('a'), 40)
-    assert_equal(cache.get('d'), 5)
-    assert_equal(cache.get('b'), 2)
-    assert_equal(cache.get('c'), None)
+    assert_equal(cache.rawget('a'), 40)
+    assert_equal(cache.rawget('d'), 5)
+    assert_equal(cache.rawget('b'), 2)
+    assert_equal(cache.rawget('c'), None)
+
+
+from rdbms import Landlord
+
+def test_landlord_in_memory():
+
+    landlord = Landlord(
+        fs=InMemoryFilesystem()
+    )
+
+    with landlord.lease_file('a') as f :
+        pass
+
+
+
+
 
 # test runner
 
