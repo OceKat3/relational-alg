@@ -694,13 +694,18 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
         return len(self.cache_index)
 
     def get(self, key:LRU_KEY) -> LRU_VALUE | None:
+        
         if key in self.cache_index :
-            return self.cache_index[key].data
+            node = self.cache_index[key]
+            self.move_to_front(node)
+            return node.data
         return None
 
+    # yield the old value if it gets replaced
     def set(self, key:LRU_KEY, val:LRU_VALUE):
         if key in self.cache_index :
             node = self.cache_index[key]
+            yield node.data
             node.data = val
         else :
             if len(self) < self.cache_size_limit :
@@ -709,9 +714,14 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
                 node = self.find_victim()
                 if not node :
                     raise self.TooManyPinnedError()
+                yield node.data
                 del self.cache_index[node.key]
                 node.data = val
-                
+
+        self.move_to_front(node)
+        self.cache_index[key] = node
+        
+    def move_to_front(self, node:CacheItem[LRU_KEY, LRU_VALUE]):
         if node.prev :
             node.prev.next = node.next
         if node.next :
@@ -727,8 +737,7 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
         if not self.least_recently_used :
             self.least_recently_used = node
         self.most_recently_used = node
-        
-        self.cache_index[key] = node
+
 
     pin_count:int = 0
 
@@ -769,18 +778,65 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
             seen_set.add(node)
             node = node.next
         
+from contextlib import _GeneratorContextManager
 
+class Landlord:
+    file_cache: LRUCache[str, Filesystem.File]
+    page_cache: LRUCache[tuple[str, int], bytearray]
 
-class PageBufferPool:
-    cache: list[bytearray]
-    cache_index: dict[tuple[str, int], bytearray]
+    fs: Filesystem
 
-    # filesystem
+    # @dataclass
+    # class RentedFile:
+    #     filename: str
+    #     file: Filesystem.File
 
-    def __init__(self, num_pages_cached:int = 10) -> None:
-        pass
+    #     @contextmanager
+    #     def lease_page(self, i:int):
+    #         pass
 
-    
+    # this is way overcomplicated just to try and give the client code a really specific syntax
+    def RentedFile(self, filename:str, file:Filesystem.File) -> Callable[[int], _GeneratorContextManager[bytearray, None, None]]:
+        @contextmanager
+        def lease_page(i:int):
+            page_key = (filename, i)
+            page = self.page_cache.get(page_key)
+
+            if not page :
+                # TODO could make an io.readinto1 optimization here
+                page = file.read_block(i)
+                for old_page in self.page_cache.set(page_key, page) :
+                    del old_page #probably not necessary since old bytearrays will get garbage collected anyway
+            self.page_cache.pin(page_key)
+            try:
+                yield page
+            finally:
+                self.page_cache.unpin(page_key)
+
+        return lease_page
+
+    def __init__(self, fs:Filesystem, num_pages_cached:int = 10, num_files_cached:int = 10) -> None:
+
+        self.fs = fs
+        self.file_cache = LRUCache[str, Filesystem.File](num_files_cached)
+        self.page_cache = LRUCache[tuple[str, int], bytearray](num_pages_cached)
+
+    @contextmanager
+    def lease_file(self, filename:str):
+        file = self.file_cache.get(filename)
+
+        if not file :
+            file = self.fs.open(filename)
+            for victim in self.file_cache.set(filename, file) :
+                victim.close()            
+
+        self.file_cache.pin(filename)
+        try :
+            yield self.RentedFile(filename, file)
+        finally :
+            pass
+        
+
 
 
 INTCONFIG = {"byteorder": "little", "signed": False}

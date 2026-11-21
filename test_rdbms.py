@@ -419,7 +419,9 @@ def test_lru_cache_linkedlist():
     assert_equal(cache.get('b'), 100)
     assert_equal(cache.get('c'), None)
 
-    cache.check_linked_list()
+    assert_equal(len(cache.cache_index), 3)
+    assert_equal(cache.most_recently_used.prev, None) #type: ignore
+    assert_equal(cache.most_recently_used.next, None) #type: ignore
 
 def test_lru_cache_linkedlist_2():
 
@@ -476,6 +478,35 @@ def test_lru_cache_pins():
     with expect_failure(cache.TooManyPinnedError) :
         cache.set('f', 6)
 
+def test_lru_cache_move_to_front_after_calling_get():
+
+    cache = LRUCache[str, int](cache_size_limit=3)
+    
+    cache.set('a', 1)
+    assert_equal(cache.get('a'), 1)
+    
+    cache.set('b', 2)
+    cache.set('c', 3)
+
+    # c b a
+    
+    assert_equal(cache.get('a'), 1)
+    assert_equal(cache.get('b'), 2)
+    assert_equal(cache.get('c'), 3)
+    assert_equal(cache.get('d'), None)
+
+    cache.set('a', 40)
+    # a c b
+    cache.get('b')
+    assert_equal(cache.most_recently_used.key, 'b') #type: ignore
+    # b a c
+    cache.set('d', 5)
+    # d b a
+
+    assert_equal(cache.get('a'), 40)
+    assert_equal(cache.get('d'), 5)
+    assert_equal(cache.get('b'), 2)
+    assert_equal(cache.get('c'), None)
 
 # test runner
 
