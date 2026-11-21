@@ -706,12 +706,15 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
                 node = self.find_victim()
                 if not node :
                     raise self.TooManyPinnedError()
+                del self.cache_index[node.key]
                 node.data = val
                 
         if node.prev :
             node.prev.next = node.next
         if node.next :
             node.next.prev = node.prev
+        if self.least_recently_used == node :
+            self.least_recently_used = node.prev
 
         if self.most_recently_used :
             node.next = self.most_recently_used

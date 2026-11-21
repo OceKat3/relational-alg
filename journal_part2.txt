@@ -523,3 +523,5 @@ like basically there is a cache of open files and there is a cache of pages with
 Wow pylance/pyright typechecker really saved my ass when writing this linked list implementation
 
 this is like the 100th linked list ive written in my life and i still cant get it right the first time lol
+
+Nice, the cache linked list seeeems to work just fine now. I need to get pins working, then implement the lru cache in PageBufferPool, which i'll do after cleaning my house
