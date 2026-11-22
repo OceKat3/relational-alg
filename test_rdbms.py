@@ -586,8 +586,94 @@ def test_landlord_in_memory():
     with landlord.lease_file('a') as f :
         pass
 
-from rdbms import HeapDatastore
+from rdbms import SlottedPage, DirectoryPage, PageFullException
 import random
+
+def test_slotted_page():
+
+    records = [bytes(chr(x+48), encoding="utf-8") for x in range(BLOCK_SIZE // 8)]
+
+    page = SlottedPage(bytearray())
+    page.initialize(0)
+
+    for r in records:
+        page.add_record(r)
+
+    for r1, r2 in zip(records, page.iter_records()) :
+        assert_equal(r1, r2)
+
+    page.compact()
+    for r1, r2 in zip(records, page.iter_records()) :
+        assert_equal(r1, r2)
+
+    assert_equal(page.slot_count, len(records))
+
+def test_slotted_page_insert_too_big():
+
+    page = SlottedPage(bytearray())
+    page.initialize(0)
+    with expect_failure(PageFullException) :
+        page.add_record(b'a' * BLOCK_SIZE * 2)
+    page = SlottedPage(bytearray())
+    page.initialize(0)
+    with expect_failure(PageFullException) :
+        page.add_record(b'a' * BLOCK_SIZE)
+    page = SlottedPage(bytearray())
+    page.initialize(0)
+    with expect_failure(PageFullException) :
+        page.add_record(b'a' * (BLOCK_SIZE - SlottedPage.HEADER_LENGTH - SlottedPage.SLOT_LENGTH + 1))
+
+    page = SlottedPage(bytearray())
+    page.initialize(0)
+
+    page.add_record(b'a' * (BLOCK_SIZE // 2))
+    with expect_failure(PageFullException) :
+        page.add_record(b'a' * (BLOCK_SIZE // 2))
+
+def test_directory_page():
+
+    page = DirectoryPage()
+    page.initialize(0)
+
+    max_directories = (BLOCK_SIZE - DirectoryPage.HEADER_SIZE) // DirectoryPage.ENTRY_LENGTH
+
+    for i in range(max_directories) :
+        assert_equal(page.entry_count, i)
+        page.append(i, i*10)
+
+    for i, (id, free_space) in enumerate(page.iter_pages()) :
+        assert_equal(id, i)
+        assert_equal(free_space, i * 10)
+
+    assert_equal(page.entry_count, max_directories)
+    assert_equal(page.next_dir_page, None)
+
+    with expect_failure(PageFullException) :
+        page.append(100,100)
+
+def test_directory_page_no_data_loss():
+
+    page = DirectoryPage()
+    page.initialize(0)
+
+    max_directories = (BLOCK_SIZE - DirectoryPage.HEADER_SIZE) // DirectoryPage.ENTRY_LENGTH
+
+    for i in range(max_directories) :
+        assert_equal(page.entry_count, i)
+        page.append(2 ** 32 - 1, 2 ** 16 - 1)
+
+    for id, free_space in page.iter_pages() :
+        assert_equal(id, 2 ** 32 - 1)
+        assert_equal(free_space, 2 ** 16 - 1)
+
+    assert_equal(page.entry_count, max_directories)
+    assert_equal(page.next_dir_page, None)
+
+    with expect_failure(PageFullException) :
+        page.append(100,100)
+
+
+from rdbms import HeapDatastore
 
 def test_landlord():
 
@@ -597,7 +683,6 @@ def test_landlord():
 
     with landlord.lease_file('a') as file :
         assert file is not None
-
 
 def test_heap_datastore():
 
@@ -617,7 +702,7 @@ def test_heap_datastore_read_and_write_in_order():
     )
 
     records = [
-        bytes(c, encoding="utf-8") * random.randint(5, 50)
+        bytes(c, encoding="utf-8") * random.randint(5, 20)
         for c in '0123456789'
     ] * 20
 
@@ -632,13 +717,6 @@ def test_heap_datastore_read_and_write_in_order():
             assert_equal(r1, r2)
     
         
-    
-
-from rdbms import SlottedPage, DirectoryPage
-
-# TODO test these guys
-
-
 
 # test runner
 

@@ -1024,7 +1024,12 @@ class DirectoryPage:
 
     def __getitem__(self, key:int):
         entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
-        if not self.HEADER_SIZE <= entry_start < BLOCK_SIZE-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+        if not self.HEADER_SIZE <= entry_start <= BLOCK_SIZE-self.ENTRY_LENGTH : 
+            raise IndexError(
+                f'index {key} is out of range: byte {entry_start} not valid\n'
+                f'{entry_start} = {self.HEADER_SIZE} + {self.ENTRY_LENGTH} * {key}, '
+                f'and {entry_start} is not within {self.HEADER_SIZE} and {BLOCK_SIZE-self.ENTRY_LENGTH}'
+            )
 
         raw = self.raw[entry_start:entry_start+self.ENTRY_LENGTH]
 
@@ -1032,8 +1037,12 @@ class DirectoryPage:
 
     def __setitem__(self, key:int, val:tuple[int,int] ):
         entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
-        if not self.HEADER_SIZE <= entry_start < BLOCK_SIZE-self.ENTRY_LENGTH : 
-            raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+        if not self.HEADER_SIZE <= entry_start <= BLOCK_SIZE-self.ENTRY_LENGTH : 
+            raise IndexError(
+                f'index {key} is out of range: byte {entry_start} not valid\n'
+                f'{entry_start} = {self.HEADER_SIZE} + {self.ENTRY_LENGTH} * {key}, '
+                f'and {entry_start} is not within {self.HEADER_SIZE} and {BLOCK_SIZE-self.ENTRY_LENGTH}'
+            )
         data_page_id, free_space = val
 
         self.raw[entry_start:entry_start+4] = data_page_id.to_bytes(**INTCONFIG, length=4)
