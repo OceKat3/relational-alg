@@ -561,4 +561,18 @@ Just realized there were a few missing details in my LRU cache implementation, w
 
 For example, get() needs to trigger a reorder since that counts as "using" the value in the cache... which also means I need a rawget function so tests can look into the cache without triggering a reorder
 
-grrrr something is really fucked up in my lru cache, it's failing the test that checks like 12! permutations of input patterns 
+grrrr something is really fucked up in my lru cache, it's failing the test that checks like 16! permutations of input patterns 
+
+fuck 16 factorial is actually a lot maybe i shouldnt make a test that complicated....
+yeah once this one test passes i'll chance itertools.permutations to itertools.combinations_with_replacement, and do like 16 choose 8 tests instead, which is only like 12 thousand
+
+well, the test is passing, but it seems to run forever... i think this is becasue 16 permute 8 is an astronomically huge number (it's like 500 million). So instead i think i'll test like 12 permute 4 behaviour sequences, to save time.
+
+
+Taking a break now, next steps are to finish up the storage engine and then get to work on generating relational algebra from sql and then optimizing it. I should also write tests for SlottedPage and DirectoryPage when i have a chance...
+
+- finish HeapDatastore
+- get rid of InMemoryDatabase and replace it with like a "FilesystemDatabase" or something
+
+
+shit im not gonna finish this list cause i really have to go home

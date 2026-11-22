@@ -1,3 +1,19 @@
+# rdbms
+
+Relational database management system written in python for a bonus assignment in COMP3005 at carleton, for professor Abdelghny Orogat
+
+ZERO ai tools were used in writing this project, not even the gemini bullshit that shows up when you search on google. The assignment explicitly allowed ai tools but i just have so much aura i wanted to do it the hard way
+
+The actual assignment is in rdbms.py, and there are a bunch of tests in test_rdbms.py. Never tested in a windows system but that probably shouldn't matter
+
+
+
+
+
+----
+
+OLD README
+
 # relational-alg
 
 A relational algebra query parser written for COMP3005 Database Management Systems at Carleton. Relational Algebra is a languaage, i.e. when you write relational algebra you are describing what computations you want the database engine to do. This project is my own interpretation of a relational algebra language, with a couple features I thought would be cool.

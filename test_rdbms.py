@@ -423,6 +423,8 @@ def test_lru_cache_linkedlist():
     assert_equal(cache.most_recently_used.prev, None) #type: ignore
     assert_equal(cache.least_recently_used.next, None) #type: ignore
 
+    cache.check_linked_list()
+
 def test_lru_cache_linkedlist_2():
 
     cache = LRUCache[str, int](cache_size_limit=64)
@@ -485,6 +487,7 @@ def test_lru_cache_pins():
     assert_equal(cache.pin_count, 0)
 
     cache.pin('a')
+
     assert_equal(cache.pin_count, 1)
 
     # c b [a]
@@ -502,6 +505,8 @@ def test_lru_cache_pins():
 
     # e [d] [a]
 
+    assert_equal(cache.pin_count, 2)
+
     assert_equal(cache.rawget('a'), 1)
     assert_equal(cache.rawget('b'), None)
     assert_equal(cache.rawget('c'), None)
@@ -510,6 +515,12 @@ def test_lru_cache_pins():
 
     cache.pin('e')
 
+    assert_equal(cache.pin_count, 3)
+
+    cache.pin('e')
+
+    assert_equal(cache.pin_count, 4)
+
     # [e] [d] [a]
 
     # pprint(cache.cache_index)
@@ -517,6 +528,22 @@ def test_lru_cache_pins():
 
     with expect_failure(cache.TooManyPinnedError) :
         cache.set('f', 6)
+
+    cache.unpin('e')
+    cache.unpin('a')
+    cache.unpin('d')
+
+    assert_equal(cache.pin_count, 1)
+
+    cache.unpin('e')
+
+    assert_equal(cache.pin_count, 0)
+
+    with expect_failure(AssertionError) :
+        cache.unpin('e')
+
+    cache.check_linked_list()
+    
 
 def test_lru_cache_move_to_front_after_calling_get():
 
@@ -548,7 +575,6 @@ def test_lru_cache_move_to_front_after_calling_get():
     assert_equal(cache.rawget('b'), 2)
     assert_equal(cache.rawget('c'), None)
 
-
 from rdbms import Landlord
 
 def test_landlord_in_memory():
@@ -560,7 +586,9 @@ def test_landlord_in_memory():
     with landlord.lease_file('a') as f :
         pass
 
+from rdbms import SlottedPage, DirectoryPage
 
+# TODO test these guys
 
 
 

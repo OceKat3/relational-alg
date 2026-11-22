@@ -706,7 +706,7 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
             return self.cache_index[key].data
         return None
 
-    # yield the old value if it gets replaced
+    # return the old value if it gets replaced
     def set(self, key:LRU_KEY, val:LRU_VALUE) -> LRU_VALUE | None:
         old_data = None
         if key in self.cache_index :
@@ -778,27 +778,38 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
         
         node = self.least_recently_used
         seen_set:set[LRU_KEY] = set()
-        while node and node.pinned : 
-            if node in seen_set :
+        while node : 
+            if node.key in seen_set :
                 raise AssertionError('circularity in linked list in backwards direction')
             seen_set.add(node.key)
             node = node.prev
 
+        assert seen_set == set(self.cache_index.keys())
+
         node = self.most_recently_used
         seen_set:set[LRU_KEY] = set()
-        while node and node.pinned : 
-            if node in seen_set :
+        while node : 
+            if node.key in seen_set :
                 raise AssertionError('circularity in linked list in forwards direction')
             seen_set.add(node.key)
             node = node.next
+
+        assert seen_set == set(self.cache_index.keys())
         
 from contextlib import _GeneratorContextManager
 
 class Landlord:
+    #TODO warn whenever an empty block gets put into the page cache
     file_cache: LRUCache[str, Filesystem.File]
     page_cache: LRUCache[tuple[str, int], bytearray]
 
     fs: Filesystem
+
+    def __init__(self, fs:Filesystem, num_pages_cached:int = 10, num_files_cached:int = 10) -> None:
+
+        self.fs = fs
+        self.file_cache = LRUCache[str, Filesystem.File](num_files_cached)
+        self.page_cache = LRUCache[tuple[str, int], bytearray](num_pages_cached)
 
     @dataclass
     class RentedFile:
@@ -832,16 +843,10 @@ class Landlord:
             self.file.write_block(i, data)
 
             buffer = self.page_cache.get(page_key)
-            if buffer :
-                pass
+            if buffer and len(buffer) == len(data) == BLOCK_SIZE:
+                buffer[:] = data
             else :
-                self.page_cache.set(page_key, data)
-
-    def __init__(self, fs:Filesystem, num_pages_cached:int = 10, num_files_cached:int = 10) -> None:
-
-        self.fs = fs
-        self.file_cache = LRUCache[str, Filesystem.File](num_files_cached)
-        self.page_cache = LRUCache[tuple[str, int], bytearray](num_pages_cached)
+                self.page_cache.set(page_key, bytearray(data))
 
     @contextmanager
     def lease_file(self, filename:str):
@@ -857,20 +862,18 @@ class Landlord:
         try :
             yield self.RentedFile(filename, file, self)
         finally :
-            pass
-        
+            pass        
 
 
 
 INTCONFIG = {"byteorder": "little", "signed": False}
 
-# assignment says we have to use this format
 
+# assignment says we have to use slotted/directory format
 # maybe eventually SlottedPage and DirectoryPage can be the same abstraction
 
 class PageFullException(BaseException):
     pass
-
 
 @dataclass
 class SlottedPage:
