@@ -519,7 +519,7 @@ class Filesystem:
         def read_block(self, i:int) -> bytearray:
             raise NotImplementedError()
         
-        def write_block(self, i:int, data:bytes):
+        def write_block(self, i:int, data:bytes|bytearray):
             raise NotImplementedError()
 
         def close(self):
@@ -555,16 +555,16 @@ class InMemoryFilesystem(Filesystem):
                 return bytearray(self.blocks[i])
             return bytearray(b'')
 
-        def write_block(self, i:int, data:bytes):
+        def write_block(self, i:int, data:bytes|bytearray):
             assert self.open_count == 1
 
             if len(data) != BLOCK_SIZE :
                 raise ValueError(f"block is not {BLOCK_SIZE} bytes: {len(data)=}")
 
             if 0 <= i < len(self.blocks) :
-                self.blocks[i] = data
+                self.blocks[i] = bytes(data)
             elif i >= len(self.blocks) :
-                self.blocks.append(data)
+                self.blocks.append(bytes(data))
             else :
                 raise IndexError(i)
 
@@ -609,7 +609,7 @@ class OnDiskFileystem(Filesystem):
             self.io.seek(i * BLOCK_SIZE)
             return bytearray(self.io.read(BLOCK_SIZE))
 
-        def write_block(self, i:int, data:bytes):
+        def write_block(self, i:int, data:bytes|bytearray):
             if len(data) != BLOCK_SIZE :
                 raise ValueError(f"block is not {BLOCK_SIZE} bytes: {len(data)=}")
             i = min(i, self.size_blocks())
@@ -755,6 +755,10 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
 
     pin_count:int = 0
 
+    @property
+    def num_pinned_pages(self) -> int:
+        return sum(1 for x in self.cache_index.values() if x.pinned)
+
     def pin(self, key:LRU_KEY):
         if key not in self.cache_index :
             raise KeyError(key, self.cache_index.keys())
@@ -796,8 +800,6 @@ class LRUCache(Generic[LRU_KEY, LRU_VALUE]):
 
         assert seen_set == set(self.cache_index.keys())
         
-from contextlib import _GeneratorContextManager
-
 class Landlord:
     #TODO warn whenever an empty block gets put into the page cache
     file_cache: LRUCache[str, Filesystem.File]
@@ -837,7 +839,7 @@ class Landlord:
             finally:
                 self.page_cache.unpin(page_key)
     
-        def write_page(self, i:int, data:bytes):
+        def write_page(self, i:int, data:bytes|bytearray):
             page_key = (self.filename, i)
 
             self.file.write_block(i, data)
@@ -856,13 +858,13 @@ class Landlord:
             file = self.fs.open(filename)
             old_file = self.file_cache.set(filename, file)
             if old_file :
-                old_file.close()            
+                old_file.close()
 
         self.file_cache.pin(filename)
         try :
             yield self.RentedFile(filename, file, self)
         finally :
-            pass        
+            pass
 
 
 
@@ -887,6 +889,9 @@ class SlottedPage:
     #  record
 
     raw: bytearray
+
+    def __init__(self, raw:bytearray | None = None) -> None:
+        self.raw = raw or bytearray(b'\0'*BLOCK_SIZE)
 
     def initialize(self, page_id:int):
         self.page_id = page_id
@@ -949,9 +954,12 @@ class SlottedPage:
             record = bytes(self.raw)[record_offset:record_offset+record_length]
             yield record
 
+    @classmethod
+    def required_space(cls, new_record:bytes) -> int:
+        return cls.SLOT_LENGTH + len(new_record)
+
     def add_record(self, new_record:bytes):
-        available_space = self.free_space
-        required_space = len(new_record) + self.SLOT_LENGTH
+        required_space = self.required_space(new_record)
         if self.free_space < required_space :
             raise PageFullException()
 
@@ -979,8 +987,16 @@ class DirectoryPage:
 
     raw: bytearray
 
+    def __init__(self, raw:bytearray | None = None) -> None:
+        self.raw = raw or bytearray(b'\0'*BLOCK_SIZE)
+
     HEADER_SIZE=10
     ENTRY_LENGTH = 4+2
+
+    def initialize(self, page_id:int):
+        self.page_id = page_id
+        self.next_dir_page = None
+        self.entry_count = 0
 
     @property
     def page_id(self) -> int:
@@ -1016,7 +1032,8 @@ class DirectoryPage:
 
     def __setitem__(self, key:int, val:tuple[int,int] ):
         entry_start = self.HEADER_SIZE + self.ENTRY_LENGTH * key
-        if not self.HEADER_SIZE <= entry_start < BLOCK_SIZE-self.ENTRY_LENGTH : raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
+        if not self.HEADER_SIZE <= entry_start < BLOCK_SIZE-self.ENTRY_LENGTH : 
+            raise IndexError(f'index {key} is out of range: byte {entry_start} not valid')
         data_page_id, free_space = val
 
         self.raw[entry_start:entry_start+4] = data_page_id.to_bytes(**INTCONFIG, length=4)
@@ -1035,11 +1052,89 @@ class DirectoryPage:
 
 @dataclass
 class HeapDatastore:
-    
-    file: Filesystem.File
 
-    def add_record():
-        pass
+    file: Landlord.RentedFile
+
+    def initialize(self):
+        first_directory = DirectoryPage()
+        first_directory.initialize(0)
+
+        self.file.write_page(0, first_directory.raw)
+
+
+
+    def add_record(self, record:bytes):
+        if self.file.file.size_blocks() == 0 :
+            self.initialize()
+        
+        required_space = SlottedPage.required_space(record)
+
+        last_directory_idx:int = 0
+        directory_idx: int | None = 0
+        while directory_idx is not None :
+            last_directory_idx = directory_idx
+
+            with self.file.lease_page(directory_idx) as directory :
+                directory = DirectoryPage(directory)
+
+                for i, (page_idx, free_space) in enumerate(directory.iter_pages()) :
+                    with self.file.lease_page(page_idx) as data_page :
+                        data_page = SlottedPage(data_page)
+
+                        if free_space >= required_space :
+                            data_page.compact()
+                            data_page.add_record(record)
+                            directory[i] = (page_idx, data_page.free_space)
+
+                            self.file.write_page(page_idx, data_page.raw)
+                            self.file.write_page(directory_idx, directory.raw)
+                            
+                            return
+
+                directory_idx = directory.next_dir_page
+
+
+        n = self.file.file.size_blocks()
+
+        new_data_page = SlottedPage()
+        new_data_page.initialize(n)
+        new_data_page.add_record(record)
+
+        self.file.write_page(n, bytes(new_data_page.raw))
+
+        with self.file.lease_page(last_directory_idx) as last_directory :
+            last_directory = DirectoryPage(last_directory)
+
+            try :
+                last_directory.append(n, new_data_page.free_space)
+            except PageFullException :
+                new_directory = DirectoryPage()
+                new_directory.initialize(n+1)
+                new_directory.append(n+1, new_data_page.free_space)
+
+                self.file.write_page(n+1, bytes(new_directory.raw))
+        
+
+    def iter_records(self) -> Generator[bytes]:
+        if self.file.file.size_blocks() == 0 :
+            yield from []
+            return
+
+        directory_idx: int | None = 0
+        while directory_idx is not None :
+
+            with self.file.lease_page(directory_idx) as directory :
+                directory = DirectoryPage(directory)
+
+                for page_idx, free_space in directory.iter_pages() :
+                    with self.file.lease_page(page_idx) as data_page :
+                        data_page = SlottedPage(data_page)
+
+                        yield from data_page.iter_records()
+                
+                directory_idx = directory.next_dir_page
+
+
 
 
 
@@ -1057,6 +1152,12 @@ class Database:
 
     def create_table(self, table:Table):
         raise NotImplementedError()
+
+class OnDiskDatabase(Database):
+    landlord: Landlord
+    
+    def __init__(self, fs: Filesystem, pages_cached = 64) -> None:
+        self.landlord = Landlord(fs, num_files_cached=10, num_pages_cached=pages_cached)
 
 class InMemoryDatabase(Database):
 

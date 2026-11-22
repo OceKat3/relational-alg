@@ -586,6 +586,54 @@ def test_landlord_in_memory():
     with landlord.lease_file('a') as f :
         pass
 
+from rdbms import HeapDatastore
+import random
+
+def test_landlord():
+
+    landlord = Landlord(
+        fs=InMemoryFilesystem()
+    )
+
+    with landlord.lease_file('a') as file :
+        assert file is not None
+
+
+def test_heap_datastore():
+
+    landlord = Landlord(
+        fs=InMemoryFilesystem()
+    )
+
+    with landlord.lease_file('a') as f :
+        heap = HeapDatastore(f)
+        heap.add_record(b'asdasdasdasd')
+        assert_equal(next(heap.iter_records()), b'asdasdasdasd')
+
+def test_heap_datastore_read_and_write_in_order():
+
+    landlord = Landlord(
+        fs=InMemoryFilesystem()
+    )
+
+    records = [
+        bytes(c, encoding="utf-8") * random.randint(5, 50)
+        for c in '0123456789'
+    ] * 20
+
+    with landlord.lease_file('a') as file:
+        heap = HeapDatastore(file)
+
+        for record in records :
+            heap.add_record(record)
+        
+        for r1,r2 in zip(records, heap.iter_records()) :
+            print(r1, r2)
+            assert_equal(r1, r2)
+    
+        
+    
+
 from rdbms import SlottedPage, DirectoryPage
 
 # TODO test these guys

@@ -576,3 +576,7 @@ Taking a break now, next steps are to finish up the storage engine and then get 
 
 
 shit im not gonna finish this list cause i really have to go home
+
+
+Gaaaahhh i'm probably not gonna finish this project by today. But i think I can finish up the storage engine at least....
+
