@@ -1125,8 +1125,6 @@ class HeapDatastore:
                 self.file.write_page(n+1, new_directory.raw)
             self.file.write_page(last_directory_idx, last_directory.raw)
             
-        
-
     def iter_records(self) -> Generator[bytes]:
         if self.file.file.size_blocks() == 0 :
             yield from []

@@ -6,7 +6,7 @@ ZERO ai tools were used in writing this project, not even the gemini bullshit th
 
 The actual assignment is in rdbms.py, and there are a bunch of tests in test_rdbms.py. Never tested in a windows system but that probably shouldn't matter
 
-
+As of writing this readme, the project is still not done. It's quite difficult! I think I need to pull an all-nighter, perhaps
 
 
 
