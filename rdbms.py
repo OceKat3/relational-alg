@@ -1119,9 +1119,12 @@ class HeapDatastore:
             except PageFullException :
                 new_directory = DirectoryPage()
                 new_directory.initialize(n+1)
-                new_directory.append(n+1, new_data_page.free_space)
+                new_directory.append(n, new_data_page.free_space)
+                last_directory.next_dir_page = n+1
 
-                self.file.write_page(n+1, bytes(new_directory.raw))
+                self.file.write_page(n+1, new_directory.raw)
+            self.file.write_page(last_directory_idx, last_directory.raw)
+            
         
 
     def iter_records(self) -> Generator[bytes]:

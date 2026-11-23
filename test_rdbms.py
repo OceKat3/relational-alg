@@ -630,6 +630,9 @@ def test_slotted_page_insert_too_big():
     with expect_failure(PageFullException) :
         page.add_record(b'a' * (BLOCK_SIZE // 2))
 
+    assert_equal(sum(1 for x in page.iter_records()), 1)
+    assert_equal(page.slot_count, 1)
+
 def test_directory_page():
 
     page = DirectoryPage()
@@ -651,6 +654,9 @@ def test_directory_page():
     with expect_failure(PageFullException) :
         page.append(100,100)
 
+    assert_equal(page.entry_count, max_directories)
+    assert_equal(page.next_dir_page, None)
+
 def test_directory_page_no_data_loss():
 
     page = DirectoryPage()
@@ -671,6 +677,9 @@ def test_directory_page_no_data_loss():
 
     with expect_failure(PageFullException) :
         page.append(100,100)
+
+    assert_equal(page.entry_count, max_directories)
+    assert_equal(page.next_dir_page, None)
 
 
 from rdbms import HeapDatastore
@@ -702,7 +711,7 @@ def test_heap_datastore_read_and_write_in_order():
     )
 
     records = [
-        bytes(c, encoding="utf-8") * random.randint(5, 20)
+        bytes(c, encoding="utf-8") * random.randint(10, 30)
         for c in '0123456789'
     ] * 20
 
