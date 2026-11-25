@@ -1,4 +1,4 @@
-from rdbms import Recognizer, Parser, tokenizer, sql_grammar, SqlTreeReducer, MockDatabaseSchemaOnly, ExecutionContext, Table, InMemoryDatabase
+from rdbms import Recognizer, Parser, tokenizer, sql_grammar, SqlTreeReducer, MockDatabaseSchemaOnly, ExecutionContext, Table
 
 from pprint import pformat, pprint
 from contextlib import contextmanager
@@ -281,10 +281,10 @@ def test_typecheck_insert_into_2():
 
 
 
-
+from rdbms import FilesystemDatabase, InMemoryFilesystem
 def test_memory_db_1():
 
-    db = InMemoryDatabase()
+    db = FilesystemDatabase(InMemoryFilesystem())
 
     employees = COMPANY_DATABASE_SCHEMA.get_table_by_name('employees')
     assert employees
@@ -728,7 +728,28 @@ def test_heap_datastore_read_and_write_in_order():
         assert_equal(records_from_heap, expected_set)
     
 
+def test_heap_datastore_add_records():
 
+    landlord = Landlord(
+        fs=InMemoryFilesystem()
+    )
+
+    records = [
+        bytes(c, encoding="utf-8") * random.randint(10, 30)
+        for c in '0123456789'
+    ] * 20
+
+    expected_set = set(records)
+
+    with landlord.lease_file('a') as file:
+        heap = HeapDatastore(file)
+
+        heap.add_records(records)
+        
+        records_from_heap = set(heap.iter_records())
+
+        assert_equal(records_from_heap, expected_set)
+    
 
 
 

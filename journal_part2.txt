@@ -624,3 +624,15 @@ the old InMemoryDatabase was doing wayyy too much, which has all been delegated 
 FilesystemDatabase will not be the only kind of database, because I also want a Database implementation that doesn't concern itself with file/bytearray stuff at all. (for example, MockDatabaseSchemaOnly)
 
 Ohhhhhhh i also have to change HeapDatastore to do add_records instead of just add_record.... i almost forgot
+
+
+Another thing to add to the todo list.... SlottedPage should be able to delete records, which also wipes the slot. Then, it needs to be able to fill in these wiped slots instead of creating a brand new slot. an iter_slots function would be helpful
+
+but right now the most useful thing I can do is implement HeapDatastore.add_records. this is gonna probably be a super difficult function... the iterator interface is helpful and i think i'll be using next() a lot. My hope is that add_records is more performance than calling add_record n times
+
+
+if records are not all the same size, and the smallest record is not first, then maayybee add_records will not optimally fill space. i think i'll just have it do a greedy search for the first page with enough space to hold the next record... a non-greedy solution would sort the incoming records by length in ascending order, but that would defeat the whole point of using iterators to control memory usage
+
+I'm a little concerned about using exception handling in DirectoryPage to communicate that a page is full... but it leads to clean code, and i think any userspace cpu cost will be negligible compared to disk operations.
+https://stackoverflow.com/questions/2522005/cost-of-exception-handlers-in-python
+

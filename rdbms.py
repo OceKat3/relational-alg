@@ -850,6 +850,13 @@ class Landlord:
             else :
                 self.page_cache.set(page_key, bytearray(data))
 
+        # def append_page(self, data:bytes|bytearray) -> int:
+        #     n = self.file.size_blocks()
+        #     self.write_page(n, data)
+        #     return n
+
+            
+
     @contextmanager
     def lease_file(self, filename:str):
         file = self.file_cache.get(filename)
@@ -875,6 +882,9 @@ INTCONFIG = {"byteorder": "little", "signed": False}
 # maybe eventually SlottedPage and DirectoryPage can be the same abstraction
 
 class PageFullException(BaseException):
+    pass
+
+class TooBigException(ValueError):
     pass
 
 @dataclass
@@ -961,6 +971,9 @@ class SlottedPage:
         return cls.SLOT_LENGTH + len(new_record)
 
     def add_record(self, new_record:bytes):
+        if len(new_record) > self.MAX_RECORD_SIZE :
+            raise ValueError(f"attempted to insert record longer than {self.MAX_RECORD_SIZE}")
+        
         required_space = self.required_space(new_record)
         if self.free_space < required_space :
             raise PageFullException()
@@ -994,6 +1007,8 @@ class DirectoryPage:
 
     HEADER_SIZE=10
     ENTRY_LENGTH = 4+2
+
+    MAX_ENTRIES = (BLOCK_SIZE - HEADER_SIZE) // ENTRY_LENGTH
 
     def initialize(self, page_id:int):
         self.page_id = page_id
@@ -1050,10 +1065,11 @@ class DirectoryPage:
         self.raw[entry_start:entry_start+4] = data_page_id.to_bytes(**INTCONFIG, length=4)
         self.raw[entry_start+4:entry_start+6] = free_space.to_bytes(**INTCONFIG, length=2)
     
-    def append(self, data_page_id:int, free_space:int):
+    def append(self, data_page_id:int, free_space:int) -> int:
         try :
             self[self.entry_count] = (data_page_id, free_space)
             self.entry_count += 1
+            return self.entry_count - 1
         except IndexError :
             raise PageFullException()
 
@@ -1111,7 +1127,7 @@ class HeapDatastore:
         new_data_page.initialize(n)
         new_data_page.add_record(record)
 
-        self.file.write_page(n, bytes(new_data_page.raw))
+        self.file.write_page(n, new_data_page.raw)
 
         with self.file.lease_page(last_directory_idx) as last_directory :
             last_directory = DirectoryPage(last_directory)
@@ -1128,60 +1144,85 @@ class HeapDatastore:
             self.file.write_page(last_directory_idx, last_directory.raw)
 
 
-    def add_records(self, records:Iterator[bytes]):
-        raise NotImplementedError()
+    def add_records(self, records_iterable:Iterable[bytes]):
+
+        records = iter(records_iterable)
 
         if self.file.file.size_blocks() == 0 :
             self.initialize()
-        
-        required_space = SlottedPage.required_space(record)
+
+        try :
+            record = next(records)
+        except StopIteration :
+            return
+
+        # required_space = SlottedPage.required_space(record)
 
         last_directory_idx:int = 0
         directory_idx: int | None = 0
-        while directory_idx is not None :
-            last_directory_idx = directory_idx
+        try :
+            while directory_idx is not None :
+                last_directory_idx = directory_idx
 
-            with self.file.lease_page(directory_idx) as directory :
-                directory = DirectoryPage(directory)
+                # fill all the existing pages in this directory
+                with self.file.lease_page(directory_idx) as directory :
+                    directory = DirectoryPage(directory)
 
-                for i, (page_idx, free_space) in enumerate(directory.iter_pages()) :
-                    with self.file.lease_page(page_idx) as data_page :
-                        data_page = SlottedPage(data_page)
+                    # for i, (page_idx, free_space) in enumerate(directory.iter_pages()) :
+                    
+                    j: int = 0
+                    while j < DirectoryPage.MAX_ENTRIES :
 
-                        if free_space >= required_space :
-                            data_page.compact()
-                            data_page.add_record(record)
-                            directory[i] = (page_idx, data_page.free_space)
-
-                            self.file.write_page(page_idx, data_page.raw)
-                            self.file.write_page(directory_idx, directory.raw)
+                        # we need to make a new page
+                        if j >= directory.entry_count :
+                            directory_idx = self.file.file.size_blocks()
                             
-                            return
+                            new_data_page = SlottedPage()
+                            new_data_page.initialize(directory_idx)
+                            
+                            self.file.write_page(directory_idx, new_data_page.raw)
+                            directory.append(directory_idx, new_data_page.free_space)
+                            
+                        page_idx, free_space = directory[j]
 
-                directory_idx = directory.next_dir_page
+                        if free_space < SlottedPage.required_space(record) : continue
+                        
+                        with self.file.lease_page(page_idx) as data_page :
+                            data_page = SlottedPage(data_page)
 
+                            while data_page.free_space >= SlottedPage.required_space(record) :
+                                data_page.add_record(record)
+                                record = next(records)
+                    
+                        directory[j] = (page_idx, data_page.free_space)    
+                        data_page.compact()
+                        self.file.write_page(page_idx, data_page.raw)
+                    
+                    self.file.write_page(directory_idx, directory.raw)
+                                                        
+                    directory_idx = directory.next_dir_page
 
-        n = self.file.file.size_blocks()
+                # we need to make a new directory
+                if directory_idx is None :
 
-        new_data_page = SlottedPage()
-        new_data_page.initialize(n)
-        new_data_page.add_record(record)
+                    with self.file.lease_page(last_directory_idx) as last_directory :
+                        
+                        last_directory = DirectoryPage(last_directory)
+                        directory_idx = self.file.file.size_blocks()
+                        
+                        new_directory = DirectoryPage()
+                        new_directory.initialize(directory_idx)
+                        last_directory.next_dir_page = directory_idx
+        
+                        self.file.write_page(directory_idx, new_directory.raw)
+                        self.file.write_page(last_directory_idx, last_directory.raw)
 
-        self.file.write_page(n, bytes(new_data_page.raw))
+        except StopIteration:
+            return
 
-        with self.file.lease_page(last_directory_idx) as last_directory :
-            last_directory = DirectoryPage(last_directory)
+        else :
+            raise IOError(f"Failed to insert all rows into {self.file.name}")
 
-            try :
-                last_directory.append(n, new_data_page.free_space)
-            except PageFullException :
-                new_directory = DirectoryPage()
-                new_directory.initialize(n+1)
-                new_directory.append(n, new_data_page.free_space)
-                last_directory.next_dir_page = n+1
-
-                self.file.write_page(n+1, new_directory.raw)
-            self.file.write_page(last_directory_idx, last_directory.raw)
 
 
     def iter_records(self) -> Generator[bytes]:
