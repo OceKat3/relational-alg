@@ -586,7 +586,7 @@ def test_landlord_in_memory():
     with landlord.lease_file('a') as f :
         pass
 
-from rdbms import SlottedPage, DirectoryPage, PageFullException
+from rdbms import SlottedPage, DirectoryPage, PageFullException, TooBigException
 import random
 
 def test_slotted_page():
@@ -612,15 +612,15 @@ def test_slotted_page_insert_too_big():
 
     page = SlottedPage(bytearray())
     page.initialize(0)
-    with expect_failure(PageFullException) :
+    with expect_failure(TooBigException) :
         page.add_record(b'a' * BLOCK_SIZE * 2)
     page = SlottedPage(bytearray())
     page.initialize(0)
-    with expect_failure(PageFullException) :
+    with expect_failure(TooBigException) :
         page.add_record(b'a' * BLOCK_SIZE)
     page = SlottedPage(bytearray())
     page.initialize(0)
-    with expect_failure(PageFullException) :
+    with expect_failure(TooBigException) :
         page.add_record(b'a' * (BLOCK_SIZE - SlottedPage.HEADER_LENGTH - SlottedPage.SLOT_LENGTH + 1))
 
     page = SlottedPage(bytearray())
@@ -735,7 +735,7 @@ def test_heap_datastore_add_records():
     )
 
     records = [
-        bytes(c, encoding="utf-8") * random.randint(10, 30)
+        bytes(c, encoding="utf-8") * random.randint(2, 30)
         for c in '0123456789'
     ] * 20
 
@@ -745,13 +745,16 @@ def test_heap_datastore_add_records():
         heap = HeapDatastore(file)
 
         heap.add_records(records)
-        
+        heap.prettyprint()
+        quit()
         records_from_heap = set(heap.iter_records())
 
         assert_equal(records_from_heap, expected_set)
     
 
 
+test_heap_datastore_add_records()
+quit()
 
 # test runner
 

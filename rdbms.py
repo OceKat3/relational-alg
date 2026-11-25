@@ -972,7 +972,7 @@ class SlottedPage:
 
     def add_record(self, new_record:bytes):
         if len(new_record) > self.MAX_RECORD_SIZE :
-            raise ValueError(f"attempted to insert record longer than {self.MAX_RECORD_SIZE}")
+            raise TooBigException(f"attempted to insert record longer than {self.MAX_RECORD_SIZE}")
         
         required_space = self.required_space(new_record)
         if self.free_space < required_space :
@@ -1175,13 +1175,14 @@ class HeapDatastore:
 
                         # we need to make a new page
                         if j >= directory.entry_count :
-                            directory_idx = self.file.file.size_blocks()
+                            n = self.file.file.size_blocks()
                             
                             new_data_page = SlottedPage()
-                            new_data_page.initialize(directory_idx)
+                            new_data_page.initialize(n)
                             
-                            self.file.write_page(directory_idx, new_data_page.raw)
-                            directory.append(directory_idx, new_data_page.free_space)
+                            self.file.write_page(n, new_data_page.raw)
+                            directory.append(n, new_data_page.free_space)
+                            
                             
                         page_idx, free_space = directory[j]
 
@@ -1192,11 +1193,14 @@ class HeapDatastore:
 
                             while data_page.free_space >= SlottedPage.required_space(record) :
                                 data_page.add_record(record)
+                                print(f"inserted {record}")
                                 record = next(records)
                     
                         directory[j] = (page_idx, data_page.free_space)    
                         data_page.compact()
                         self.file.write_page(page_idx, data_page.raw)
+
+                        j += 1
                     
                     self.file.write_page(directory_idx, directory.raw)
                                                         
@@ -1264,7 +1268,7 @@ class HeapDatastore:
                         data_page = SlottedPage(data_page)
 
                         pages[page_idx] = f'Data page\n'
-                        pages[page_idx] += '\n'.join(list(str(x, encoding="utf-8") for x in data_page.iter_records()))
+                        pages[page_idx] += '\n'.join(list(x.decode('utf-8', 'ignore') for x in data_page.iter_records()))
                 
                 directory_idx = directory.next_dir_page
         print('\n')

@@ -636,3 +636,5 @@ if records are not all the same size, and the smallest record is not first, then
 I'm a little concerned about using exception handling in DirectoryPage to communicate that a page is full... but it leads to clean code, and i think any userspace cpu cost will be negligible compared to disk operations.
 https://stackoverflow.com/questions/2522005/cost-of-exception-handlers-in-python
 
+
+Okay okay awesome, i think add_records is mostly working. I think i'm just gonna add a bit more to the Landlord conext managers because, right now, next(records) triggers StopIteration once all records have been added, and this causes the last page to not get saved. So instead, i think it's obvious that context managers should handle saving once the file is done being used
