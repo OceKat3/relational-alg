@@ -710,10 +710,19 @@ def test_heap_datastore_read_and_write_in_order():
         fs=InMemoryFilesystem()
     )
 
+    # records = [
+    #     bytes(c, encoding="utf-8") * random.randint(10, 30)
+    #     for c in '0123456789'
+    # ] * 20
+
     records = [
-        bytes(c, encoding="utf-8") * random.randint(10, 30)
-        for c in '0123456789'
-    ] * 20
+        b'1' * 30,
+        b'2' * 30,
+        b'3' * 30,
+        b'4' * 3,
+        b'5' * 3,
+        b'6' * 3
+    ]
 
     with landlord.lease_file('a') as file:
         heap = HeapDatastore(file)
@@ -721,6 +730,9 @@ def test_heap_datastore_read_and_write_in_order():
         for record in records :
             heap.add_record(record)
         
+        heap.prettyprint()
+        quit()
+
         for r1,r2 in zip(records, heap.iter_records()) :
             print(r1, r2)
             assert_equal(r1, r2)

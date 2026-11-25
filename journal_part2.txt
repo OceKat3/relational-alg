@@ -580,3 +580,32 @@ shit im not gonna finish this list cause i really have to go home
 
 Gaaaahhh i'm probably not gonna finish this project by today. But i think I can finish up the storage engine at least....
 
+
+
+Alright, it's been a few days since working on this project, and I think I know how to tackle the HeapDatastore bug. I'll debug this like i debugged all the other complex things in this project, which is by making really good data visualization tools. 
+
+I don't even know what's wrong with HeapDatastore and staring at the algorithm has not worked, so I want to implement like a visualize_blocks function. The issue, of course, is that some pages can't be identified as either a data page or a directory page (because, for example, they have no links going in/out)
+
+
+wow, just like that i found the problem..... my test assumed that reads and writes should come back in the same order, but that's a pretty stupid assumption considering i literally wrote an insertion algorithm that looks for the first empty spot to place any record. here is the output of prettyprint:
+
+page 0:
+Directory page (next: None)
+-> 1 (free space: 1)
+-> 2 (free space: 22)
+-> 3 (free space: 22)
+
+page 1:
+Data page
+111111111111111111111111111111
+444
+555
+666
+
+page 2:
+Data page
+222222222222222222222222222222
+
+page 3:
+Data page
+333333333333333333333333333333

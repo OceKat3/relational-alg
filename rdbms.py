@@ -1144,9 +1144,31 @@ class HeapDatastore:
                 
                 directory_idx = directory.next_dir_page
 
+    def prettyprint(self):
 
+        n = self.file.file.size_blocks()
 
+        pages = ['unidentified'] * n
 
+        directory_idx: int | None = 0
+        while directory_idx is not None :
+
+            with self.file.lease_page(directory_idx) as directory :
+                directory = DirectoryPage(directory)
+
+                pages[directory_idx] = f"Directory page (next: {directory.next_dir_page})\n"
+                pages[directory_idx] += '\n'.join(list(f"-> {data_id} (free space: {free_space})" for data_id, free_space in directory.iter_pages()))
+
+                for page_idx, free_space in directory.iter_pages() :
+                    with self.file.lease_page(page_idx) as data_page :
+                        data_page = SlottedPage(data_page)
+
+                        pages[page_idx] = f'Data page\n'
+                        pages[page_idx] += '\n'.join(list(str(x, encoding="utf-8") for x in data_page.iter_records()))
+                
+                directory_idx = directory.next_dir_page
+        print('\n')
+        print('\n\n'.join(f'page {i}:\n{page}' for i, page in enumerate(pages)))
 
 
 class Database:
