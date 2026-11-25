@@ -838,6 +838,28 @@ class Landlord:
                 yield page
             finally:
                 self.page_cache.unpin(page_key)
+
+        # dry violation
+        @contextmanager
+        def lease_slotted_page(self, i:int):
+            with self.lease_page(i) as page :
+                page = SlottedPage(page)
+                try :
+                    yield page
+                finally :
+                    if page.modified :
+                        page.compact()
+                        self.write_page(i, page.raw)
+        @contextmanager
+        def lease_directory_page(self, i:int):
+            with self.lease_page(i) as page :
+                page = DirectoryPage(page)
+                try :
+                    yield page
+                finally :
+                    if page.modified :
+                        self.write_page(i, page.raw)
+        
     
         def write_page(self, i:int, data:bytes|bytearray):
             page_key = (self.filename, i)
@@ -899,11 +921,14 @@ class SlottedPage:
     #  record
 
     raw: bytearray
+    modified = False
 
     def __init__(self, raw:bytearray | None = None) -> None:
+        if not raw : self.modified = True
         self.raw = raw or bytearray(b'\0'*BLOCK_SIZE)
 
     def initialize(self, page_id:int):
+        modified = True
         self.page_id = page_id
         self.slot_count = 0
         self.free_end = len(self.raw)
@@ -932,12 +957,15 @@ class SlottedPage:
 
     @page_id.setter
     def page_id(self, val:int):
+        modified = True
         self.raw[:4] = val.to_bytes(**INTCONFIG, length=4)
     @slot_count.setter
     def slot_count(self, val:int):
+        modified = True
         self.raw[4:6] = val.to_bytes(**INTCONFIG, length=2)
     @free_end.setter
     def free_end(self, val:int):
+        modified = True
         self.raw[6:8] = val.to_bytes(**INTCONFIG, length=2)
 
 
@@ -988,6 +1016,7 @@ class SlottedPage:
 
         self.free_end = record_offset
         self.slot_count += 1
+        self.modified = True
 
     def compact(self):
         records = list(self.iter_records())
@@ -1001,8 +1030,10 @@ class SlottedPage:
 class DirectoryPage:
 
     raw: bytearray
+    modified:bool = False
 
     def __init__(self, raw:bytearray | None = None) -> None:
+        if not raw : modified = True
         self.raw = raw or bytearray(b'\0'*BLOCK_SIZE)
 
     HEADER_SIZE=10
@@ -1014,6 +1045,7 @@ class DirectoryPage:
         self.page_id = page_id
         self.next_dir_page = None
         self.entry_count = 0
+        modified = True
 
     @property
     def page_id(self) -> int:
@@ -1028,15 +1060,18 @@ class DirectoryPage:
 
     @page_id.setter
     def page_id(self, val:int):
+        self.modified = True
         self.raw[:4] = val.to_bytes(**INTCONFIG, length=4)
     @next_dir_page.setter
     def next_dir_page(self, val:int | None):
+        self.modified = True
         if val is None :
             self.raw[4:8] = b'\xFF\xFF\xFF\xFF'
         else:
             self.raw[4:8] = val.to_bytes(**INTCONFIG, length=4)
     @entry_count.setter
     def entry_count(self, val:int):
+        self.modified = True
         self.raw[8:10] = val.to_bytes(**INTCONFIG, length=2)
 
     def __getitem__(self, key:int):
@@ -1065,6 +1100,8 @@ class DirectoryPage:
         self.raw[entry_start:entry_start+4] = data_page_id.to_bytes(**INTCONFIG, length=4)
         self.raw[entry_start+4:entry_start+6] = free_space.to_bytes(**INTCONFIG, length=2)
     
+        self.modified = True
+
     def append(self, data_page_id:int, free_space:int) -> int:
         try :
             self[self.entry_count] = (data_page_id, free_space)
@@ -1165,11 +1202,8 @@ class HeapDatastore:
                 last_directory_idx = directory_idx
 
                 # fill all the existing pages in this directory
-                with self.file.lease_page(directory_idx) as directory :
-                    directory = DirectoryPage(directory)
+                with self.file.lease_directory_page(directory_idx) as directory :
 
-                    # for i, (page_idx, free_space) in enumerate(directory.iter_pages()) :
-                    
                     j: int = 0
                     while j < DirectoryPage.MAX_ENTRIES :
 
@@ -1183,22 +1217,18 @@ class HeapDatastore:
                             self.file.write_page(n, new_data_page.raw)
                             directory.append(n, new_data_page.free_space)
                             
-                            
                         page_idx, free_space = directory[j]
 
                         if free_space < SlottedPage.required_space(record) : continue
                         
-                        with self.file.lease_page(page_idx) as data_page :
-                            data_page = SlottedPage(data_page)
+                        with self.file.lease_slotted_page(page_idx) as data_page :
 
                             while data_page.free_space >= SlottedPage.required_space(record) :
                                 data_page.add_record(record)
                                 print(f"inserted {record}")
                                 record = next(records)
                     
-                        directory[j] = (page_idx, data_page.free_space)    
-                        data_page.compact()
-                        self.file.write_page(page_idx, data_page.raw)
+                            directory[j] = (page_idx, data_page.free_space)    
 
                         j += 1
                     
@@ -1209,17 +1239,18 @@ class HeapDatastore:
                 # we need to make a new directory
                 if directory_idx is None :
 
-                    with self.file.lease_page(last_directory_idx) as last_directory :
+                    with self.file.lease_directory_page(last_directory_idx) as last_directory :
                         
-                        last_directory = DirectoryPage(last_directory)
-                        directory_idx = self.file.file.size_blocks()
+                        n = self.file.file.size_blocks()
                         
                         new_directory = DirectoryPage()
-                        new_directory.initialize(directory_idx)
-                        last_directory.next_dir_page = directory_idx
+                        new_directory.initialize(n)
+                        last_directory.next_dir_page = n
         
-                        self.file.write_page(directory_idx, new_directory.raw)
+                        self.file.write_page(n, new_directory.raw)
                         self.file.write_page(last_directory_idx, last_directory.raw)
+
+                        directory_idx = n
 
         except StopIteration:
             return
