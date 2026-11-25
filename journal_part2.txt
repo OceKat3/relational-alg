@@ -638,3 +638,69 @@ https://stackoverflow.com/questions/2522005/cost-of-exception-handlers-in-python
 
 
 Okay okay awesome, i think add_records is mostly working. I think i'm just gonna add a bit more to the Landlord conext managers because, right now, next(records) triggers StopIteration once all records have been added, and this causes the last page to not get saved. So instead, i think it's obvious that context managers should handle saving once the file is done being used
+
+
+
+Nice, now that add_records works, I think I'm gonna clean up some tech debt...
+
+- change add_record to just delegate to add_records. right now i have two implementations when really i should have one
+- turn on all the tests again
+
+
+woahhh fuckkk its super broken...
+
+looks like i forgot to do j += 1 in an inner loop in add_records... all tests are passing now
+
+
+Just like with the other HeapDatastore logging stuff, i think the resulting logs that I added are really good evidence that this class is working correctly. Here is all the access related to the first directory page, and then creating the next directory page a:10
+
+opening file a
+opening page a:0
+opening page a:1
+inserted b'0000000000000000000000000'
+closing page a:1
+opening page a:2
+inserted b'1111111111111111111111111111'
+inserted b'2222222222'
+closing page a:2
+opening page a:3
+inserted b'33333333333333333333'
+inserted b'44444444444444444444444444'
+closing page a:3
+opening page a:4
+inserted b'5555555'
+inserted b'66666666666666666666666666666'
+inserted b'777'
+closing page a:4
+opening page a:5
+inserted b'8888888888888'
+inserted b'999999'
+inserted b'0000000000000000000000000'
+closing page a:5
+opening page a:6
+inserted b'1111111111111111111111111111'
+inserted b'2222222222'
+closing page a:6
+opening page a:7
+inserted b'33333333333333333333'
+inserted b'44444444444444444444444444'
+closing page a:7
+opening page a:8
+inserted b'5555555'
+inserted b'66666666666666666666666666666'
+inserted b'777'
+closing page a:8
+opening page a:9
+inserted b'8888888888888'
+inserted b'999999'
+inserted b'0000000000000000000000000'
+closing page a:9
+closing page a:0
+opening page a:0
+opening page a:10
+closing page a:10
+closing page a:0
+
+niiiicee i got rid of all write_block calls in add_records, now everything is context managers. this the program behaviour probably more confusing but it makes the algorithm shorter.... i'm glad it works, this algorithm has been killing me for like 3 days
+
+

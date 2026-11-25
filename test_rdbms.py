@@ -745,16 +745,10 @@ def test_heap_datastore_add_records():
         heap = HeapDatastore(file)
 
         heap.add_records(records)
-        heap.prettyprint()
-        quit()
         records_from_heap = set(heap.iter_records())
 
         assert_equal(records_from_heap, expected_set)
     
-
-
-test_heap_datastore_add_records()
-quit()
 
 # test runner
 
