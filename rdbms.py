@@ -902,6 +902,8 @@ class SlottedPage:
     HEADER_LENGTH = 8
     SLOT_LENGTH = 4
 
+    MAX_RECORD_SIZE = BLOCK_SIZE - HEADER_LENGTH - SLOT_LENGTH
+
     @property
     def page_id(self) -> int:
         return int.from_bytes(self.raw[:4], **INTCONFIG)
@@ -1124,7 +1126,64 @@ class HeapDatastore:
 
                 self.file.write_page(n+1, new_directory.raw)
             self.file.write_page(last_directory_idx, last_directory.raw)
-            
+
+
+    def add_records(self, records:Iterator[bytes]):
+        raise NotImplementedError()
+
+        if self.file.file.size_blocks() == 0 :
+            self.initialize()
+        
+        required_space = SlottedPage.required_space(record)
+
+        last_directory_idx:int = 0
+        directory_idx: int | None = 0
+        while directory_idx is not None :
+            last_directory_idx = directory_idx
+
+            with self.file.lease_page(directory_idx) as directory :
+                directory = DirectoryPage(directory)
+
+                for i, (page_idx, free_space) in enumerate(directory.iter_pages()) :
+                    with self.file.lease_page(page_idx) as data_page :
+                        data_page = SlottedPage(data_page)
+
+                        if free_space >= required_space :
+                            data_page.compact()
+                            data_page.add_record(record)
+                            directory[i] = (page_idx, data_page.free_space)
+
+                            self.file.write_page(page_idx, data_page.raw)
+                            self.file.write_page(directory_idx, directory.raw)
+                            
+                            return
+
+                directory_idx = directory.next_dir_page
+
+
+        n = self.file.file.size_blocks()
+
+        new_data_page = SlottedPage()
+        new_data_page.initialize(n)
+        new_data_page.add_record(record)
+
+        self.file.write_page(n, bytes(new_data_page.raw))
+
+        with self.file.lease_page(last_directory_idx) as last_directory :
+            last_directory = DirectoryPage(last_directory)
+
+            try :
+                last_directory.append(n, new_data_page.free_space)
+            except PageFullException :
+                new_directory = DirectoryPage()
+                new_directory.initialize(n+1)
+                new_directory.append(n, new_data_page.free_space)
+                last_directory.next_dir_page = n+1
+
+                self.file.write_page(n+1, new_directory.raw)
+            self.file.write_page(last_directory_idx, last_directory.raw)
+
+
     def iter_records(self) -> Generator[bytes]:
         if self.file.file.size_blocks() == 0 :
             yield from []
@@ -1185,47 +1244,28 @@ class Database:
     def create_table(self, table:Table):
         raise NotImplementedError()
 
-class OnDiskDatabase(Database):
-    landlord: Landlord
-    
-    def __init__(self, fs: Filesystem, pages_cached = 64) -> None:
-        self.landlord = Landlord(fs, num_files_cached=10, num_pages_cached=pages_cached)
+class FilesystemDatabase(Database):
 
-class InMemoryDatabase(Database):
+    landlord: Landlord 
 
-    fs: InMemoryFilesystem 
-
-    def __init__(self) -> None:
-        self.fs = InMemoryFilesystem()
-        # self.fs.create_file("catalog")
-
+    def __init__(self, fs:Filesystem) -> None:
+        self.landlord = Landlord(fs)
     
 
-    def iter_records(self, filename:str) -> Generator[bytes]:
-        for page in map(SlottedPage, self.fs.iter_blocks(filename)) :
-            yield from page.iter_records()
 
-    def add_record(self, filename:str, record:bytes):
-        file = self.fs.get_file(filename)
-        last_page = SlottedPage(file[-1])
-        try :
-            last_page.add_record(record)
-        except last_page.PageFullException :
-            self.fs.grow(filename)
-            last_page = SlottedPage(file[-1])
-            last_page.initialize(len(file) - 1)
-            last_page.add_record(record)
+    def add_records(self, filename:str, record:bytes):
+        with self.landlord.lease_file(filename) as file :
+            heap = HeapDatastore(file)
+
+            heap.add_records(record)
 
     MAX_TABLE_NAME = 64
     @staticmethod
     def serialize_table(table:Table):
         out = str()
-        if len(table.name) > InMemoryDatabase.MAX_TABLE_NAME :
-            raise TypeError(f"table name cannot be longer than {InMemoryDatabase.MAX_TABLE_NAME}")
-        # out += len(table.name).to_bytes(**SlottedPage.INTCONFIG, length=1)
-        # out += bytes(table.name, encoding='utf-8')
-        # for col in table.schema :
-        #     out += len()
+        if len(table.name) > FilesystemDatabase.MAX_TABLE_NAME :
+            raise TypeError(f"table name cannot be longer than {FilesystemDatabase.MAX_TABLE_NAME}")
+        
         out += "CREATE TABLE "
         out += table.name
         out += " ("
@@ -1239,6 +1279,10 @@ class InMemoryDatabase(Database):
             else:
                 raise TypeError(f"not a serializable column type in table definition: {table.name}.{col.name} : {col.type}")
         out += ");"
+
+        if len(out) > SlottedPage.MAX_RECORD_SIZE : 
+            raise TypeError(f"serialized table cannot be longer than {SlottedPage.MAX_RECORD_SIZE}")
+
         return bytes(out, encoding='utf-8')
 
     @staticmethod
@@ -2501,7 +2545,7 @@ class CartesianProduct(BinaryRelationalExpression):
 
 
 
-from typing import Literal, Generator, Iterable
+from typing import Literal, Generator, Iterable, Iterator
 
 type Token = tuple[Literal['string_literal'] | Literal['identifier'] | Literal['char'], str, int] \
     | tuple[Literal['number'], int, int]

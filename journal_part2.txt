@@ -609,3 +609,18 @@ Data page
 page 3:
 Data page
 333333333333333333333333333333
+
+
+
+Wow, now that the test is fixed, i actually think it's a really cool visualization of this "heap" data structure that we were assigned to make...
+
+it kinda sucks that unit tests made me waste that much time lmao. onto the database abstraction:
+
+
+i think InMemoryDatabase and OnDiskDatabase are bascially useless now, since the decision to do stuff in memory or on disk has been moved to the Filesystem implementation.... i read a bit of the gang of four book, and I think this is a "strategy" pattern. So database shouldn't care what kind of filesystem you have, you give it a filesystem in its constructor. (is this dependency injection?)
+
+the old InMemoryDatabase was doing wayyy too much, which has all been delegated to HeapDatastore and SlottedPage/DirectoryPage and Filesystem.
+
+FilesystemDatabase will not be the only kind of database, because I also want a Database implementation that doesn't concern itself with file/bytearray stuff at all. (for example, MockDatabaseSchemaOnly)
+
+Ohhhhhhh i also have to change HeapDatastore to do add_records instead of just add_record.... i almost forgot
