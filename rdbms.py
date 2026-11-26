@@ -250,6 +250,9 @@ sql_grammar:grammartype = {
         ["create_table"],
         ["insert"],
         ["query"],
+
+        ["analyze"],
+        ["drop_table"],
         # ["delete"]
     ],
 
@@ -363,6 +366,14 @@ sql_grammar:grammartype = {
         [sql_keyword("INTERSECT")],
         [sql_keyword("EXCEPT")],
     ],
+
+    "analyze": [
+        [sql_keyword("ANALYZE")]
+    ],
+
+    "drop_table": [
+        [sql_keyword("DROP"), sql_keyword("TABLE"), identifier]
+    ]
 
 }
 
@@ -481,8 +492,8 @@ class SQLContext:
             yield
 
 
-# BLOCK_SIZE = 4096
-BLOCK_SIZE = 64
+BLOCK_SIZE = 4096
+# BLOCK_SIZE = 64
 
 # class InMemoryFilesystem:
 #     BLOCK_SIZE = 4096
@@ -835,10 +846,10 @@ class Landlord:
                     del old_page #probably not necessary since old bytearrays will get garbage collected anyway
             self.page_cache.pin(page_key)
             try:
-                print(f'opening page {self.filename}:{i}')
+                # print(f'opening page {self.filename}:{i}')
                 yield page
             finally:
-                print(f'closing page {self.filename}:{i}')
+                # print(f'closing page {self.filename}:{i}')
                 self.page_cache.unpin(page_key)
 
         # dry violation
@@ -893,10 +904,10 @@ class Landlord:
 
         self.file_cache.pin(filename)
         try :
-            print(f'opening file {filename}')
+            # print(f'opening file {filename}')
             yield self.RentedFile(filename, file, self)
         finally :
-            print(f'closing file {filename}')
+            # print(f'closing file {filename}')
             pass
 
 
@@ -1135,8 +1146,14 @@ class HeapDatastore:
 
     def add_records(self, records_iterable:Iterable[bytes]):
 
+        def check_record(r):
+            if len(r) > SlottedPage.MAX_RECORD_SIZE :
+                raise TooBigException(f"attempted to insert record longer than {SlottedPage.MAX_RECORD_SIZE}")
+            return r
+        
         records = iter(records_iterable)
-
+        records = map(check_record, records)
+        
         if self.file.file.size_blocks() == 0 :
             self.initialize()
 
@@ -1176,7 +1193,7 @@ class HeapDatastore:
 
                             while data_page.free_space >= SlottedPage.required_space(record) :
                                 data_page.add_record(record)
-                                print(f"inserted {record}") 
+                                # print(f"inserted {record}") 
                                 record = next(records)
                     
                             directory[j] = (page_idx, data_page.free_space)    
@@ -1203,8 +1220,6 @@ class HeapDatastore:
 
         else :
             raise IOError(f"Failed to insert all rows into {self.file.name}")
-
-
 
     def iter_records(self) -> Generator[bytes]:
         if self.file.file.size_blocks() == 0 :
@@ -1275,11 +1290,25 @@ class FilesystemDatabase(Database):
     
 
 
-    def add_records(self, filename:str, record:bytes):
+    def add_records(self, filename:str, records:Iterable[bytes]):
         with self.landlord.lease_file(filename) as file :
             heap = HeapDatastore(file)
+            heap.add_records(records)
 
-            heap.add_records(record)
+    def write_rows_to_table(self, table:Table):
+        pass
+
+    def create_table(self, table: Table):
+    
+        if table.name in self.fs.files :
+            raise TypeError
+
+        schema_record = self.serialize_table(table)
+
+        self.add_record('catalog', schema_record)
+        
+        self.fs.create_file(table.name)
+        SlottedPage(self.fs.get_file(table.name)[0]).initialize(0)
 
     MAX_TABLE_NAME = 64
     @staticmethod
@@ -1323,18 +1352,6 @@ class FilesystemDatabase(Database):
         assert isinstance(ast, SQL.CreateTable)
             
         return ast.table
-    
-    def create_table(self, table: Table):
-
-        if table.name in self.fs.files :
-            raise TypeError
-
-        schema_record = self.serialize_table(table)
-
-        self.add_record('catalog', schema_record)
-        
-        self.fs.create_file(table.name)
-        SlottedPage(self.fs.get_file(table.name)[0]).initialize(0)
 
     @staticmethod
     def get_tuple_deserializer(schema:list[Table.ColDef]) -> Callable[[bytes], tuple]:

@@ -704,3 +704,17 @@ closing page a:0
 niiiicee i got rid of all write_block calls in add_records, now everything is context managers. this the program behaviour probably more confusing but it makes the algorithm shorter.... i'm glad it works, this algorithm has been killing me for like 3 days
 
 
+
+From here, i think it's probably best to figure out the relational algebra and optimizer before writing the FilesystemDatabase... i'm still not confident in my database abstraction so I just want to make everything else concrete
+
+Biiiig important thing before I can write the optimizer is to figure out statistics.
+
+I think I want to store statistics in a relational way, it would be cool if the relational database used itself to describe itself. In order to do that, I need to run unoptimized unoptimized queries. (because i will not keep statistics on the statistics table(s))
+
+optimizer depends on statistics, relational algebra
+i think i can do relational algebra with what i have now
+statistics depends on a few new SQL commands being added, and on relational algebra being hooked up to the storage engine
+
+I think i'll go to bed soon, but I just spent a while setting up postgres/pgadmin on this new laptop. it took alot of fucking with my wsl/docker configs 
+
+I'll spend some time running some EXPLAIN queries to get an idea how how postgres does relational algebra.

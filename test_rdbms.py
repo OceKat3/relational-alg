@@ -749,6 +749,17 @@ def test_heap_datastore_add_records():
 
         assert_equal(records_from_heap, expected_set)
     
+def test_heap_datastore_too_big():
+
+    landlord = Landlord(InMemoryFilesystem())
+
+    with expect_failure(TooBigException) :
+        with landlord.lease_file('a') as file :
+            heap = HeapDatastore(file)
+
+            heap.add_record(b' ' * BLOCK_SIZE)
+
+    
 
 # test runner
 
