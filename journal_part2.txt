@@ -718,3 +718,31 @@ statistics depends on a few new SQL commands being added, and on relational alge
 I think i'll go to bed soon, but I just spent a while setting up postgres/pgadmin on this new laptop. it took alot of fucking with my wsl/docker configs 
 
 I'll spend some time running some EXPLAIN queries to get an idea how how postgres does relational algebra.
+
+
+Maannn i'm finding it really hard to work on this part of the project... the relational algebra and optimizer are so ambiguous. I did a bit of work tonight but i'm not doing real work. I'm just moving stuff around and making some obvious constructs. 
+
+My biggest concern by far is name resolution.... specifically, being able to use algebraic rewriting rules to move stuff around while also not breaking name resolution. (or even turning SQL into RA without breaking name resolution, for that matter). I should think/write about this for a bit, before going home and going to bed
+
+in a SELECT statement, there are a couple different kinds of names:
+- table names, SQL.TableName, with an optional rename. There is a 'real' table name, which is either the rename if it exists, else the original table's name. (this is the name property of TableName). The original name of a TableName will never be used anywhere else, except for looking up a Table object from the execution context
+- Expressions in where, group by, having..... these are nested expressions that will probably contain SQL.Attributes inside of them. A SQL attribute is a column and optionally table name which is not ambiguous in its execution context. (which is, with all tables in scope from the SELECT, and aggregation rules)
+
+Could you move around an expression to make it ambiguous? For example, 
+SELECT * FROM a JOIN a as a2 ON a.i = a2.j WHERE a.i>5
+one algorithm might turn this into
+Select(
+    Gt(Attribute('i', 'a'), 5)
+    Select(
+        Eq(Attribute('i', 'a'), Attribute('j', 'a2)),
+        Cross(
+            TableName('a')
+            TableName('a', 'a2')
+        )
+    )
+)
+
+hmm okay i've been messing around with this example and I'm a little more convinved that algebraic is fine, so long as I can determine the dependencies of a select statement. I think it would be good if, as part of typechecking, each attribute becomes fully qualified
+
+
+I also just had the idea of, at the cost of adding even more complexity, creating a "TypecheckResult" object in a few of the SQL nodes... i'm having a problem where the nodes are dataclasses and they have to have a bunch of default None attributes, which sucks. In the process of typechecking, SQL.Select caches a buuuunch of stuff... but typechecking either done or it isn't, so the cached results of typechecking should be one entire object which either exists or doesn't.... that also adds more complexity tho. Weeeellll, dataclass is not that hard to write.

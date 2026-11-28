@@ -477,19 +477,6 @@ class Table:
             else :
                 return False
 
-class SQLContext:
-
-    tables:ContextVar[list[Table]] = ContextVar('sql_context_tables', default=[])
-    
-    aggregated_attributes:ContextVar[list[SQL.Attribute]] = ContextVar('sql_aggregate_attributes', default=[])
-    in_aggregate_query:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
-    in_aggregate_function:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
-
-    @contextmanager
-    @staticmethod
-    def tables_in_scope(*tables: Table):
-        with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
-            yield
 
 
 BLOCK_SIZE = 4096
@@ -1429,6 +1416,32 @@ class MockDatabaseSchemaOnly(Database):
     def get_table_by_name(self, name:str) -> Table | None:        
         return next((x for x in self.mock_schema if x.name == name), None)
 
+
+
+class SQLContext:
+
+    tables:ContextVar[list[Table]] = ContextVar('sql_context_tables', default=[])
+    
+    aggregated_attributes:ContextVar[list[SQL.Attribute]] = ContextVar('sql_aggregate_attributes', default=[])
+    in_aggregate_query:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
+    in_aggregate_function:ContextVar[bool] = ContextVar('sql_in_aggregate_function', default=False)
+
+    @contextmanager
+    @staticmethod
+    def tables_in_scope(*tables: Table):
+        with SQLContext.tables.set(SQLContext.tables.get() + list(tables)) :
+            yield
+
+class ExpressionContext:
+
+    current_tuple: ContextVar[tuple | None] = ContextVar('expression_current_tuple', default=None)
+
+    @staticmethod
+    def get_tuple() -> tuple :
+        tup = ExpressionContext.current_tuple.get()
+        assert tup
+        return tup
+
 class ExecutionContext:
     cur_database: ContextVar[Database | None] = ContextVar('current_database', default=None)
 
@@ -1451,6 +1464,8 @@ class Expr:
             raise NotImplementedError()
         def typecheck(self) -> type[bool]:
             raise NotImplementedError()
+        def selectivity(self) -> float:
+            pass
 
     @dataclass
     class BinaryScalarExpression(ScalarExpression):
@@ -1671,6 +1686,9 @@ class SQL:
                 statement.typecheck()
             return self.statements[-1].typecheck()
 
+        def create_relational_guy(self) -> RelationalAlgebra.RelationalGuy:
+            return super().create_relational_guy()
+
     class Query(SQLNode):
         def typecheck(self) -> list[Table.ColDef]:
             raise NotImplementedError()
@@ -1686,11 +1704,14 @@ class SQL:
         having: Expr.BooleanExpression | None = None
         order_by: list[Expr.ScalarExpression] | None = None
         limit: int | None = None
-
-
         aggregated: bool = False
-        out_cols: list[Table.ColDef] | None = None
-        tables_in_context: list[Table] |None = None
+
+        typecheck_result:TypecheckResult|None = None
+
+        @dataclass
+        class TypecheckResult:
+            out_cols: list[Table.ColDef]
+            tables_in_context: list[Table]
         
         @dataclass
         class Item:
@@ -1702,6 +1723,12 @@ class SQL:
                 if self.rename is None :
                     raise TypeError("complex expressions in SELECT must be given a name")
                 return Table.ColDef(self.rename, self.value.typecheck())
+
+            @property
+            def name(self): 
+                if self.rename : return self.rename
+                assert isinstance(self.value, SQL.Attribute)
+                return self.value.col
 
         def typecheck(self) -> list[Table.ColDef]:
 
@@ -1761,11 +1788,43 @@ class SQL:
                         if self.having: 
                             self.having.typecheck()
                     
-
-            self.out_cols = out_cols
-            self.tables_in_context = tables_in_context
+            self.typecheck_result = self.TypecheckResult(out_cols, tables_in_context)
             return out_cols
-                    
+
+        def create_relational_guy(self) -> RelationalAlgebra.RelationalGuy:
+            source_relation: RelationalAlgebra.RelationalGuy | None = None
+
+            if self.from_table :
+                source_relation = self.from_table.create_relational_guy()
+
+                for join in self.from_joins or [] :
+                    if isinstance(join, SQL.CommaJoin) :
+                        assert join.cols_in_common
+                        source_relation = RelationalAlgebra.NaturalJoin(
+                            left=source_relation,
+                            right=join.joinee.create_relational_guy(),
+                            shared_cols=join.cols_in_common
+                        )
+                    else :
+                        source_relation = RelationalAlgebra.Select(
+                            predicate=join.on,
+                            operand=RelationalAlgebra.Cross(
+                                left=source_relation,
+                                right=join.joinee.create_relational_guy(),
+                            )
+                        )
+
+            if not source_relation :
+                source_relation = RelationalAlgebra.OneEmptyRow()
+
+            if self.where:
+                filtered = RelationalAlgebra.Select(
+                    operand=source_relation,
+                    predicate=self.where
+                )
+            
+                
+    
     @dataclass
     class Subquery(SQLNode):
         query: SQL.Query
@@ -1782,6 +1841,9 @@ class SQL:
         @property
         def name(self) : 
             return self.rename
+
+        def create_relational_guy(self) -> RelationalAlgebra.RelationalGuy:
+            return RelationalAlgebra.RenameRelation(self.rename, self.query.create_relational_guy())
     
     @dataclass
     class Join(SQLNode):
@@ -1795,6 +1857,9 @@ class SQL:
         def typecheck(self) -> None:
             assert self.on.typecheck() == bool
             assert self.opname in ["INNER", "LEFT", "CROSS"], f"invalid join, {self.opname}"
+
+        def create_relational_guy(self) -> RelationalAlgebra.RelationalGuy:
+            raise NotImplementedError()
 
     # natural inner join
     @dataclass
@@ -1954,7 +2019,6 @@ class SQL:
             self.table = table.name
 
             if self.is_aggregation_valid() :
-                print(self)
 
                 if not SQLContext.in_aggregate_query.get() :
                     raise TypeError(f"cannot aggregate {self.col} when not in an aggregate query. use SELECT ... AGGREGATE FROM, or SELECT ... GROUP BY")
@@ -1971,6 +2035,7 @@ class SQL:
     class TableName(SQLNode):
         original_name: str
         rename: str | None = None
+        table: Table
         def typecheck(self) -> Table:
 
             db = ExecutionContext.database()
@@ -2026,12 +2091,28 @@ class SQL:
 class RelationalAlgebra:
 
     class RelationalGuy():
-        pass
+        def __hash__(self):
+            return hash(repr(self))
+
+        def schema(self) -> list[Table.ColDef]:
+            raise NotImplementedError()
 
     @dataclass
-    class ScanTable():
+    class ReturnLast(RelationalGuy):
+        statements: list[RelationalAlgebra.RelationalGuy]
+
+        def schema(self):
+            return self.statements[-1].schema();
+
+    @dataclass
+    class ScanTable(RelationalGuy):
         table: Table
         original_name: str
+
+    @dataclass
+    class OneEmptyRow(RelationalGuy):
+        def schema(self):
+            return []
 
     @dataclass
     class Select(RelationalGuy):
@@ -2039,13 +2120,22 @@ class RelationalAlgebra:
         operand: RelationalAlgebra.RelationalGuy
 
     @dataclass
-    class ProjectRenameCompute(RelationalGuy):
+    class ComputeProjectRename(RelationalGuy):
         output: list[SQL.Select.Item]
+        cols: list[Table.ColDef]
+        operand: RelationalAlgebra.RelationalGuy
+        def schema(self):
+            return self.cols
+
+    @dataclass
+    class RenameRelation(RelationalGuy):
+        name: str
         operand: RelationalAlgebra.RelationalGuy
 
     @dataclass
-    class GroupBy(RelationalGuy):
+    class Aggregate(RelationalGuy):
         cols: list[str]
+        aggregate_functions: list[SQL.Select.Item]
 
     @dataclass
     class Cross(RelationalGuy):
@@ -2056,8 +2146,14 @@ class RelationalAlgebra:
     class NaturalJoin(RelationalGuy):
         left: RelationalAlgebra.RelationalGuy
         right: RelationalAlgebra.RelationalGuy
-        shared_cols: list[str]
+        shared_cols: list[Table.ColDef]
 
+    class Insert():
+        pass
+    class DropTable():
+        pass
+    class Analyze():
+        pass
 
 
 class Executor:
@@ -2119,24 +2215,24 @@ class Relation:
         for t in self.data :
             print_aligned(t)
 
-@dataclass
-class BoundTuple:
-    data: list[str | int | float]
-    table: Relation
+# @dataclass
+# class BoundTuple:
+#     data: list[str | int | float]
+#     table: Relation
     
-class AlgebraNode:
-    allowed_types:list[type] = [object]
-    counter:int = 0
+# class AlgebraNode:
+#     allowed_types:list[type] = [object]
+#     counter:int = 0
 
-    def is_allowed_type(self, arg:Any) -> bool:
-        return any(isinstance(arg, T) for T in self.allowed_types)
+#     def is_allowed_type(self, arg:Any) -> bool:
+#         return any(isinstance(arg, T) for T in self.allowed_types)
 
-    def eval(self, bound_tuples:list[BoundTuple], known_relations:dict[str, Relation]) -> Any:
-        raise NotImplementedError()
+#     def eval(self, bound_tuples:list[BoundTuple], known_relations:dict[str, Relation]) -> Any:
+#         raise NotImplementedError()
 
-class RelationExpression(AlgebraNode):
-    def eval(self, *a, **kwa) -> Relation:
-        raise NotImplementedError()
+# class RelationExpression(AlgebraNode):
+#     def eval(self, *a, **kwa) -> Relation:
+#         raise NotImplementedError()
 
 
 from itertools import chain
@@ -2559,16 +2655,16 @@ def cartesian_product(self, r1:Relation, r2:Relation) -> Relation:
 
     
 
-class Union(BinaryRelationalExpression):
-    operation = union
-class Intersection(BinaryRelationalExpression):
-    operation = intersection
-class RelationSubtract(BinaryRelationalExpression):
-    operation = subtract
-class RelationDivide(BinaryRelationalExpression):
-    operation = divide
-class CartesianProduct(BinaryRelationalExpression):
-    operation = cartesian_product
+# class Union(BinaryRelationalExpression):
+#     operation = union
+# class Intersection(BinaryRelationalExpression):
+#     operation = intersection
+# class RelationSubtract(BinaryRelationalExpression):
+#     operation = subtract
+# class RelationDivide(BinaryRelationalExpression):
+#     operation = divide
+# class CartesianProduct(BinaryRelationalExpression):
+#     operation = cartesian_product
 
 # type JoinSpecification = tuple[
 #     Literal['join'],

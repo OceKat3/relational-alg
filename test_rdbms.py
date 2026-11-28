@@ -339,7 +339,7 @@ def _test_filesystem(fs:Filesystem):
 
     file.write_block(0, data2)
 
-    print(file.read_block(0) + file.read_block(1) + file.read_block(2))
+    # print(file.read_block(0) + file.read_block(1) + file.read_block(2))
 
     assert_equal(file.read_block(0), data2)
 
@@ -704,7 +704,7 @@ def test_heap_datastore_doesnt_explode():
         heap.add_record(b'asdasdasdasd')
         assert_equal(next(heap.iter_records()), b'asdasdasdasd')
 
-def test_heap_datastore_read_and_write_in_order():
+def test_heap_datastore_read_and_write():
 
     landlord = Landlord(
         fs=InMemoryFilesystem()
@@ -713,7 +713,7 @@ def test_heap_datastore_read_and_write_in_order():
     records = [
         bytes(c, encoding="utf-8") * random.randint(10, 30)
         for c in '0123456789'
-    ] * 20
+    ] * 200
 
     expected_set = set(records)
 
@@ -737,7 +737,7 @@ def test_heap_datastore_add_records():
     records = [
         bytes(c, encoding="utf-8") * random.randint(2, 30)
         for c in '0123456789'
-    ] * 20
+    ] * 2000
 
     expected_set = set(records)
 
@@ -759,7 +759,27 @@ def test_heap_datastore_too_big():
 
             heap.add_record(b' ' * BLOCK_SIZE)
 
-    
+from rdbms import RelationalAlgebra, Expr, SQL
+import rdbms
+def test_relational_basic():
+
+    with ExecutionContext.cur_database.set(COMPANY_DATABASE_SCHEMA) :
+
+        sql = ast("SELECT name FROM employees WHERE managerid=2;")
+        assert sql
+        root = sql.create_relational_guy()
+
+        assert_equal(
+            root,
+            RelationalAlgebra.ProjectRenameCompute(
+                operand = RelationalAlgebra.Select(
+                    predicate=Expr.Eq(SQL.Attribute('managerid'), Expr.ScalarLiteral(2, int)),
+                    operand=RelationalAlgebra.ScanTable(COMPANY_DATABASE_SCHEMA.mock_schema[0], 'employees')
+                ),
+                output = [SQL.Select.Item(SQL.Attribute('name'), None)]
+            )
+        )
+
 
 # test runner
 
